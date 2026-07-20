@@ -1,0 +1,282 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Player de Sinalização</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!--
+  PLAYER DE PLAYLIST — instruções rápidas
+  1) Suba vídeos/imagens para a pasta /media deste repositório (arraste e solte pelo site do GitHub).
+  2) Prefixe os nomes com números (01-, 02-...) se quiser controlar a ordem de exibição.
+  3) Antes de publicar, preencha githubUser e githubRepo no objeto CONFIG logo abaixo.
+  4) O repositório precisa ser PÚBLICO (a API do GitHub é lida sem login).
+  5) Ative o GitHub Pages em Settings > Pages > Deploy from branch.
+  A tela vai checar a pasta /media de tempos em tempos e atualizar sozinha.
+-->
+<style>
+  :root{
+    --bg:#050505;
+    --fg:#EDEDEA;
+    --fg-dim:rgba(237,237,234,.45);
+    --accent:#FFB454;
+    --accent-dim:rgba(255,180,84,.22);
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  *{ box-sizing:border-box; }
+  html,body{
+    margin:0; padding:0; width:100%; height:100%;
+    background:var(--bg); overflow:hidden;
+    font-family:var(--sans); color:var(--fg);
+  }
+  #stage{
+    position:fixed; inset:0;
+    display:flex; align-items:center; justify-content:center;
+    background:var(--bg);
+    transition:opacity .3s ease;
+  }
+  #stage.fade{ opacity:0; }
+  #stage img, #stage video{
+    max-width:100%; max-height:100%;
+    object-fit:contain;
+  }
+  #stage.cover img, #stage.cover video{
+    width:100%; height:100%;
+    object-fit:cover;
+  }
+
+  #hud{
+    position:fixed; right:18px; bottom:14px;
+    display:flex; align-items:center; gap:10px;
+    font-family:var(--mono); font-size:12px; letter-spacing:.03em;
+    color:var(--fg-dim);
+    z-index:10; pointer-events:none;
+    text-shadow:0 1px 3px rgba(0,0,0,.6);
+  }
+  #hud .dot{ width:6px; height:6px; border-radius:50%; background:var(--accent); }
+
+  #progress{
+    position:fixed; left:0; bottom:0; height:2px; width:0%;
+    background:var(--accent); opacity:.35; z-index:10;
+  }
+
+  #empty{
+    position:fixed; inset:0;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    gap:18px; text-align:center; padding:32px;
+  }
+  #empty.hidden{ display:none; }
+  .tally{
+    width:14px; height:14px; border-radius:50%;
+    background:var(--accent);
+    animation:pulse 1.8s ease-out infinite;
+  }
+  @keyframes pulse{
+    0%{ box-shadow:0 0 0 0 var(--accent-dim); }
+    70%{ box-shadow:0 0 0 22px rgba(255,180,84,0); }
+    100%{ box-shadow:0 0 0 0 rgba(255,180,84,0); }
+  }
+  #empty h1{
+    font-family:var(--mono); font-size:14px; letter-spacing:.14em;
+    text-transform:uppercase; font-weight:600; color:var(--fg); margin:0;
+  }
+  #empty p{
+    font-family:var(--sans); font-size:14px; color:var(--fg-dim);
+    max-width:420px; line-height:1.5; margin:0;
+  }
+  #empty code{
+    font-family:var(--mono); background:rgba(255,255,255,.06);
+    padding:2px 6px; border-radius:4px; color:var(--fg);
+  }
+
+  @media (prefers-reduced-motion: reduce){
+    #stage{ transition:none; }
+    .tally{ animation:none; }
+  }
+</style>
+</head>
+<body>
+
+<div id="stage"></div>
+<div id="progress"></div>
+<div id="hud"><span class="dot"></span><span id="hud-text"></span></div>
+
+<div id="empty">
+  <div class="tally"></div>
+  <h1 id="empty-title">Carregando playlist</h1>
+  <p id="empty-msg">Buscando arquivos em <code id="empty-path"></code>…</p>
+</div>
+
+<script>
+/* ============================================================
+   CONFIGURAÇÃO — edite antes de publicar
+   ============================================================ */
+const CONFIG = {
+  githubUser: 'SEU-USUARIO-GITHUB',   // ex: 'breno-silva'
+  githubRepo: 'SEU-REPOSITORIO',       // ex: 'sinalizacao-tvs'
+  branch: 'main',                      // branch onde os arquivos ficam
+  mediaFolder: 'media',                // pasta dentro do repositório
+  imageDurationSeconds: 8,             // quanto tempo cada imagem fica na tela
+  pollIntervalMinutes: 5,              // de quanto em quanto tempo checar novos arquivos
+  fitMode: 'contain',                  // 'contain' (sem cortar) ou 'cover' (preenche a tela, pode cortar)
+  startMuted: true,                    // navegadores bloqueiam autoplay com som sem interação do usuário
+  showHud: true                        // mostra contador "n/N" + relógio no canto
+};
+/* ============================================================ */
+
+const IMAGE_EXT = ['jpg','jpeg','png','gif','webp'];
+const VIDEO_EXT = ['mp4','webm','ogg'];
+
+const stage = document.getElementById('stage');
+const emptyEl = document.getElementById('empty');
+const emptyTitle = document.getElementById('empty-title');
+const emptyMsg = document.getElementById('empty-msg');
+const emptyPath = document.getElementById('empty-path');
+const progressEl = document.getElementById('progress');
+const hud = document.getElementById('hud');
+const hudText = document.getElementById('hud-text');
+
+emptyPath.textContent = '/' + CONFIG.mediaFolder;
+hud.style.display = CONFIG.showHud ? 'flex' : 'none';
+if(CONFIG.fitMode === 'cover'){ stage.classList.add('cover'); }
+
+let playlist = [];
+let index = -1;
+let advanceTimer = null;
+let videoSafetyTimer = null;
+
+function apiUrl(){
+  return `https://api.github.com/repos/${CONFIG.githubUser}/${CONFIG.githubRepo}/contents/${CONFIG.mediaFolder}?ref=${CONFIG.branch}`;
+}
+
+function extOf(name){
+  const m = /\.([a-z0-9]+)$/i.exec(name);
+  return m ? m[1].toLowerCase() : '';
+}
+
+async function fetchPlaylist(){
+  const res = await fetch(apiUrl(), { headers:{ 'Accept':'application/vnd.github+json' } });
+  if(!res.ok){
+    if(res.status === 404){
+      throw new Error(`Pasta "${CONFIG.mediaFolder}" não encontrada em ${CONFIG.githubUser}/${CONFIG.githubRepo}. Confira usuário, repositório e branch no CONFIG.`);
+    }
+    if(res.status === 403){
+      throw new Error('Limite de requisições da API do GitHub atingido. Nova tentativa em breve.');
+    }
+    throw new Error(`Falha ao carregar a lista de arquivos (HTTP ${res.status}).`);
+  }
+  const data = await res.json();
+  return data
+    .filter(item => item.type === 'file')
+    .filter(item => IMAGE_EXT.includes(extOf(item.name)) || VIDEO_EXT.includes(extOf(item.name)))
+    .sort((a,b) => a.name.localeCompare(b.name, 'pt-BR', { numeric:true, sensitivity:'base' }))
+    .map(item => ({
+      name: item.name,
+      url: item.download_url,
+      type: IMAGE_EXT.includes(extOf(item.name)) ? 'image' : 'video'
+    }));
+}
+
+function showEmpty(title, msg){
+  emptyTitle.textContent = title;
+  emptyMsg.innerHTML = msg;
+  emptyEl.classList.remove('hidden');
+  stage.style.visibility = 'hidden';
+  progressEl.style.width = '0%';
+}
+
+function hideEmpty(){
+  emptyEl.classList.add('hidden');
+  stage.style.visibility = 'visible';
+}
+
+function updateHud(){
+  if(!CONFIG.showHud) return;
+  const now = new Date();
+  const hh = String(now.getHours()).padStart(2,'0');
+  const mm = String(now.getMinutes()).padStart(2,'0');
+  const pos = playlist.length ? `${index+1}/${playlist.length}` : '';
+  hudText.textContent = `${pos}  ${hh}:${mm}`;
+}
+setInterval(updateHud, 15000);
+
+function clearTimers(){
+  if(advanceTimer){ clearTimeout(advanceTimer); advanceTimer = null; }
+  if(videoSafetyTimer){ clearTimeout(videoSafetyTimer); videoSafetyTimer = null; }
+}
+
+function startProgress(seconds){
+  progressEl.style.transition = 'none';
+  progressEl.style.width = '0%';
+  void progressEl.offsetWidth; // força reflow para reiniciar a barra
+  progressEl.style.transition = `width ${seconds}s linear`;
+  progressEl.style.width = '100%';
+}
+
+function renderCurrent(){
+  const item = playlist[index];
+  updateHud();
+  stage.classList.add('fade');
+  setTimeout(() => {
+    stage.innerHTML = '';
+    let el;
+    if(item.type === 'image'){
+      el = document.createElement('img');
+      el.src = item.url;
+      el.alt = item.name;
+      el.onerror = advance;
+      startProgress(CONFIG.imageDurationSeconds);
+      advanceTimer = setTimeout(advance, CONFIG.imageDurationSeconds * 1000);
+    } else {
+      el = document.createElement('video');
+      el.src = item.url;
+      el.autoplay = true;
+      el.muted = CONFIG.startMuted;
+      el.playsInline = true;
+      el.onended = advance;
+      el.onerror = advance;
+      progressEl.style.transition = 'none';
+      progressEl.style.width = '0%';
+      // segurança: se o vídeo nunca disparar 'ended' (arquivo com problema), avança sozinho
+      videoSafetyTimer = setTimeout(advance, 3 * 60 * 1000);
+      el.play().catch(() => {});
+    }
+    stage.appendChild(el);
+    stage.classList.remove('fade');
+  }, 300);
+}
+
+function advance(){
+  clearTimers();
+  if(playlist.length === 0) return;
+  index = (index + 1) % playlist.length;
+  renderCurrent();
+}
+
+async function refreshPlaylist(){
+  try{
+    playlist = await fetchPlaylist();
+    if(playlist.length === 0){
+      clearTimers();
+      index = -1;
+      showEmpty('Nenhum arquivo encontrado', `Arraste vídeos ou imagens para a pasta <code>/${CONFIG.mediaFolder}</code> no repositório.`);
+      return;
+    }
+    if(index === -1){
+      hideEmpty();
+      advance();
+    }
+    // se algo já está tocando, a lista fica atualizada e entra em vigor no próximo ciclo
+  }catch(err){
+    if(playlist.length === 0){
+      showEmpty('Não foi possível carregar', err.message);
+    }
+    console.error(err);
+  }
+}
+
+refreshPlaylist();
+setInterval(refreshPlaylist, CONFIG.pollIntervalMinutes * 60 * 1000);
+</script>
+</body>
+</html>
