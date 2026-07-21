@@ -41,8 +41,8 @@
     text-align: center;
   }
   #stage-inner img, #stage-inner video {
-    max-width: 100%;
-    max-height: 100%;
+    display: block;
+    margin: 0 auto;
   }
 
   #hud {
@@ -119,8 +119,8 @@ var CONFIG = {
   githubRepo: 'reprodutor_video',
   branch: 'main',
   mediaFolder: 'media',
-  imageDurationSeconds: 35,
-  pollIntervalMinutes: 60,
+  imageDurationSeconds: 15,
+  pollIntervalMinutes: 5,
   startMuted: true,
   showHud: true,
   autoReloadHours: 6
@@ -144,6 +144,18 @@ var index = -1;
 var advanceTimer = null;
 var videoSafetyTimer = null;
 var progressTimer = null;
+
+// calcula o maior tamanho possivel (em pixels) que respeita a proporcao
+// original da midia e cabe na tela - substitui o max-width/max-height em
+// porcentagem, que nao funciona de forma confiavel neste navegador antigo
+function fitToScreen(el, naturalW, naturalH) {
+  if (!naturalW || !naturalH) { return; }
+  var screenW = window.innerWidth;
+  var screenH = window.innerHeight;
+  var scale = Math.min(screenW / naturalW, screenH / naturalH);
+  el.style.width = Math.floor(naturalW * scale) + 'px';
+  el.style.height = Math.floor(naturalH * scale) + 'px';
+}
 
 function extOf(name) {
   var parts = name.split('.');
@@ -275,19 +287,21 @@ function renderCurrent() {
   var el;
   if (item.type === 'image') {
     el = document.createElement('img');
-    el.src = item.url;
-    el.alt = item.name;
+    el.onload = function () { fitToScreen(el, el.naturalWidth, el.naturalHeight); };
     el.onerror = advance;
+    el.alt = item.name;
+    el.src = item.url;
     startProgress(CONFIG.imageDurationSeconds);
     advanceTimer = setTimeout(advance, CONFIG.imageDurationSeconds * 1000);
   } else {
     el = document.createElement('video');
-    el.src = item.url;
+    el.onloadedmetadata = function () { fitToScreen(el, el.videoWidth, el.videoHeight); };
+    el.onended = advance;
+    el.onerror = advance;
     el.autoplay = true;
     el.muted = CONFIG.startMuted;
     el.setAttribute('playsinline', 'true');
-    el.onended = advance;
-    el.onerror = advance;
+    el.src = item.url;
     progressBar.style.width = '0%';
     // seguranca: se o video nao disparar 'ended', avanca sozinho em 3 minutos
     videoSafetyTimer = setTimeout(advance, 3 * 60 * 1000);
