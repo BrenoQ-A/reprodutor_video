@@ -123,7 +123,36 @@ var CONFIG = {
   pollIntervalMinutes: 5,
   startMuted: true,
   showHud: true,
-  autoReloadHours: 6
+  autoReloadHours: 6,
+
+  // --- VOLUME ---
+  // Este navegador nao tem como "ouvir" o video e medir o volume sozinho
+  // (nao existe Web Audio API nesta versao). O volume abaixo e aplicado
+  // igualmente a TODOS os videos; se um video especifico estiver muito
+  // baixo ou alto mesmo assim, ajuste-o individualmente em
+  // videoVolumeOverrides usando o nome exato do arquivo.
+  targetVolume: 0.8,          // 0 (mudo) a 1 (maximo) - aplicado a todo video
+  videoVolumeOverrides: {
+    // 'nome-do-arquivo.mp4': 0.5   // exemplo: reduz so este video
+  },
+
+  // --- PREENCHIMENTO DAS BORDAS ---
+  // Quando ativado, identifica a cor predominante da borda da imagem/video
+  // e pinta o fundo da tela com essa cor, em vez de preto.
+  fillBorderColor: true,
+
+  // --- MUSICA SOB IMAGENS ---
+  // Quando ativado, toca uma musica da lista abaixo enquanto uma IMAGEM
+  // esta na tela, e usa imageMusicDurationSeconds no lugar de
+  // imageDurationSeconds para essa imagem. Videos nao sao afetados (eles ja
+  // tem audio proprio).
+  musicEnabled: false,
+  musicPlaylist: [
+    // cole aqui os links diretos (download_url) das musicas, uma por linha:
+    // 'https://raw.githubusercontent.com/usuario/repo/main/media/musica1.mp3',
+  ],
+  imageMusicDurationSeconds: 40,
+  musicVolume: 0.5
 };
 /* ============================================================ */
 
@@ -144,6 +173,8 @@ var index = -1;
 var advanceTimer = null;
 var videoSafetyTimer = null;
 var progressTimer = null;
+var currentAudio = null;
+var musicIndex = 0;
 
 // calcula o maior tamanho possivel (em pixels) que respeita a proporcao
 // original da midia e cabe na tela - substitui o max-width/max-height em
@@ -155,6 +186,42 @@ function fitToScreen(el, naturalW, naturalH) {
   var scale = Math.min(screenW / naturalW, screenH / naturalH);
   el.style.width = Math.floor(naturalW * scale) + 'px';
   el.style.height = Math.floor(naturalH * scale) + 'px';
+}
+
+// amostra a cor predominante da borda da midia (via canvas) e pinta o
+// fundo da tela com ela, para disfarcar as barras pretas de letterbox.
+// precisa que o elemento tenha crossOrigin='anonymous' e que o servidor
+// libere CORS (o raw.githubusercontent.com libera por padrao); se algo
+// der errado (ex: CORS bloqueado), cai de volta pro preto padrao.
+var stageOuterEl = document.getElementById('stage-outer');
+function applyBorderColor(mediaEl) {
+  if (!CONFIG.fillBorderColor) {
+    stageOuterEl.style.backgroundColor = '#050505';
+    return;
+  }
+  try {
+    var size = 20;
+    var canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    var ctx = canvas.getContext('2d');
+    ctx.drawImage(mediaEl, 0, 0, size, size);
+    var data = ctx.getImageData(0, 0, size, size).data;
+    var r = 0, g = 0, b = 0, count = 0;
+    for (var y = 0; y < size; y++) {
+      for (var x = 0; x < size; x++) {
+        if (x === 0 || y === 0 || x === size - 1 || y === size - 1) {
+          var idx = (y * size + x) * 4;
+          r += data[idx]; g += data[idx + 1]; b += data[idx + 2]; count++;
+        }
+      }
+    }
+    r = Math.round(r / count); g = Math.round(g / count); b = Math.round(b / count);
+    stageOuterEl.style.backgroundColor = 'rgb(' + r + ',' + g + ',' + b + ')';
+  } catch (e) {
+    // canvas "contaminado" (CORS) ou navegador sem suporte - mantem preto
+    stageOuterEl.style.backgroundColor = '#050505';
+  }
 }
 
 function extOf(name) {
@@ -265,6 +332,11 @@ function clearTimers() {
   if (advanceTimer) { clearTimeout(advanceTimer); advanceTimer = null; }
   if (videoSafetyTimer) { clearTimeout(videoSafetyTimer); videoSafetyTimer = null; }
   if (progressTimer) { clearInterval(progressTimer); progressTimer = null; }
+  if (currentAudio) {
+    try { currentAudio.pause(); } catch (e) { /* ignora */ }
+    currentAudio.src = '';
+    currentAudio = null;
+  }
 }
 
 // barra de progresso via setInterval simples, sem depender de CSS transition
@@ -287,19 +359,38 @@ function renderCurrent() {
   var el;
   if (item.type === 'image') {
     el = document.createElement('img');
-    el.onload = function () { fitToScreen(el, el.naturalWidth, el.naturalHeight); };
+    el.crossOrigin = 'anonymous'; // necessario para o canvas poder ler a cor da imagem
+    el.onload = function () {
+      fitToScreen(el, el.naturalWidth, el.naturalHeight);
+      applyBorderColor(el);
+    };
     el.onerror = advance;
     el.alt = item.name;
     el.src = item.url;
-    startProgress(CONFIG.imageDurationSeconds);
-    advanceTimer = setTimeout(advance, CONFIG.imageDurationSeconds * 1000);
+
+    var imgDuration = CONFIG.imageDurationSeconds;
+    if (CONFIG.musicEnabled && CONFIG.musicPlaylist.length > 0) {
+      currentAudio = document.createElement('audio');
+      currentAudio.src = CONFIG.musicPlaylist[musicIndex % CONFIG.musicPlaylist.length];
+      currentAudio.volume = CONFIG.musicVolume;
+      musicIndex++;
+      try { currentAudio.play(); } catch (e) { /* ignora falha de play() */ }
+      imgDuration = CONFIG.imageMusicDurationSeconds;
+    }
+    startProgress(imgDuration);
+    advanceTimer = setTimeout(advance, imgDuration * 1000);
   } else {
     el = document.createElement('video');
+    el.crossOrigin = 'anonymous'; // necessario para o canvas poder ler a cor do video
     el.onloadedmetadata = function () { fitToScreen(el, el.videoWidth, el.videoHeight); };
+    el.onloadeddata = function () { applyBorderColor(el); };
     el.onended = advance;
     el.onerror = advance;
     el.autoplay = true;
     el.muted = CONFIG.startMuted;
+    el.volume = (CONFIG.videoVolumeOverrides && CONFIG.videoVolumeOverrides[item.name] !== undefined)
+      ? CONFIG.videoVolumeOverrides[item.name]
+      : CONFIG.targetVolume;
     el.setAttribute('playsinline', 'true');
     el.src = item.url;
     progressBar.style.width = '0%';
