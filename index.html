@@ -1,0 +1,490 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Player de Sinalizacao</title>
+<!--
+  PLAYER DE PLAYLIST - VERSAO COMPATIVEL COM NAVEGADORES ANTIGOS
+  (testado para funcionar em navegadores Samsung de ~2010, sem suporte a
+  fetch, async/await, let/const, template literals, arrow functions ou
+  variaveis CSS)
+
+  INSTRUCOES:
+  1) Suba videos/imagens para a pasta /media deste repositorio.
+  2) Prefixe os nomes com numeros (01-, 02-...) se quiser controlar a ordem.
+  3) Preencha githubUser e githubRepo no objeto CONFIG abaixo antes de publicar.
+  4) O repositorio precisa ser PUBLICO.
+  5) Ative o GitHub Pages em Settings > Pages > Deploy from branch.
+
+  GERENCIAMENTO (sem mexer na TV):
+  Esta pagina e so exibicao. Midias e configuracoes sao editadas pelo
+  notebook em admin.html, que grava direto no repositorio via API do
+  GitHub. As configuracoes ficam em /config.json na raiz do repositorio;
+  o objeto CONFIG abaixo serve apenas como valor padrao caso esse arquivo
+  ainda nao exista. A TV recarrega a pagina inteira a cada
+  autoReloadHours, e e nesse momento que um config.json novo entra em
+  vigor.
+-->
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    background: #050505;
+    overflow: hidden;
+    font-family: Arial, Helvetica, sans-serif;
+    color: #EDEDEA;
+  }
+
+  /* Centralizacao via display:table, compativel com navegadores bem antigos
+     (sem depender de flexbox) */
+  #stage-outer {
+    display: table;
+    width: 100%;
+    height: 100%;
+  }
+  #stage-inner {
+    display: table-cell;
+    vertical-align: middle;
+    text-align: center;
+  }
+  #stage-inner img, #stage-inner video {
+    display: block;
+    margin: 0 auto;
+  }
+
+  #hud {
+    position: absolute;
+    right: 18px;
+    bottom: 14px;
+    font-family: monospace;
+    font-size: 14px;
+    color: #B8B8B4;
+    z-index: 10;
+  }
+
+  #progress-track {
+    position: absolute;
+    left: 0;
+    bottom: 0;
+    height: 3px;
+    width: 100%;
+    background: transparent;
+    z-index: 10;
+  }
+  #progress-bar {
+    height: 3px;
+    width: 0%;
+    background: #FFB454;
+  }
+
+  #empty {
+    position: absolute;
+    top: 0; left: 0; width: 100%; height: 100%;
+    text-align: center;
+    padding-top: 40%;
+  }
+  #empty h1 {
+    font-size: 16px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    font-weight: bold;
+    color: #EDEDEA;
+    margin: 0 0 12px 0;
+  }
+  #empty p {
+    font-size: 14px;
+    color: #B8B8B4;
+    margin: 0 auto;
+    max-width: 420px;
+  }
+  #empty code {
+    font-family: monospace;
+    background: #222;
+    padding: 2px 6px;
+  }
+</style>
+</head>
+<body>
+
+<div id="stage-outer">
+  <div id="stage-inner"></div>
+</div>
+<div id="progress-track"><div id="progress-bar"></div></div>
+<div id="hud"></div>
+
+<div id="empty">
+  <h1 id="empty-title">Carregando playlist</h1>
+  <p id="empty-msg">Buscando arquivos...</p>
+</div>
+
+<script>
+/* ============================================================
+   CONFIGURACAO - edite antes de publicar
+   ============================================================ */
+var CONFIG = {
+  githubUser: 'BrenoQ-A',
+  githubRepo: 'reprodutor_video',
+  branch: 'main',
+  mediaFolder: 'media',
+  imageDurationSeconds: 15,
+  pollIntervalMinutes: 5,
+  startMuted: true,
+  showHud: true,
+  autoReloadHours: 6,
+
+  // --- VOLUME ---
+  // Este navegador nao tem como "ouvir" o video e medir o volume sozinho
+  // (nao existe Web Audio API nesta versao). O volume abaixo e aplicado
+  // igualmente a TODOS os videos; se um video especifico estiver muito
+  // baixo ou alto mesmo assim, ajuste-o individualmente em
+  // videoVolumeOverrides usando o nome exato do arquivo.
+  targetVolume: 0.8,          // 0 (mudo) a 1 (maximo) - aplicado a todo video
+  videoVolumeOverrides: {
+    // 'nome-do-arquivo.mp4': 0.5   // exemplo: reduz so este video
+  },
+
+  // --- PREENCHIMENTO DAS BORDAS ---
+  // Quando ativado, identifica a cor predominante da borda da imagem/video
+  // e pinta o fundo da tela com essa cor, em vez de preto.
+  fillBorderColor: true,
+
+  // --- MUSICA SOB IMAGENS ---
+  // Quando ativado, toca uma musica da lista abaixo enquanto uma IMAGEM
+  // esta na tela, e usa imageMusicDurationSeconds no lugar de
+  // imageDurationSeconds para essa imagem. Videos nao sao afetados (eles ja
+  // tem audio proprio).
+  musicEnabled: false,
+  musicPlaylist: [
+    // cole aqui os links diretos (download_url) das musicas, uma por linha:
+    // 'https://raw.githubusercontent.com/usuario/repo/main/media/musica1.mp3',
+  ],
+  imageMusicDurationSeconds: 40,
+  musicVolume: 0.5
+};
+/* ============================================================ */
+
+var IMAGE_EXT = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
+var VIDEO_EXT = ['mp4', 'webm', 'ogg'];
+
+var stageInner = document.getElementById('stage-inner');
+var emptyEl = document.getElementById('empty');
+var emptyTitle = document.getElementById('empty-title');
+var emptyMsg = document.getElementById('empty-msg');
+var progressBar = document.getElementById('progress-bar');
+var hud = document.getElementById('hud');
+
+var playlist = [];
+var index = -1;
+var advanceTimer = null;
+var videoSafetyTimer = null;
+var progressTimer = null;
+var currentAudio = null;
+var musicIndex = 0;
+
+// calcula o maior tamanho possivel (em pixels) que respeita a proporcao
+// original da midia e cabe na tela - substitui o max-width/max-height em
+// porcentagem, que nao funciona de forma confiavel neste navegador antigo
+function fitToScreen(el, naturalW, naturalH) {
+  if (!naturalW || !naturalH) { return; }
+  var screenW = window.innerWidth;
+  var screenH = window.innerHeight;
+  var scale = Math.min(screenW / naturalW, screenH / naturalH);
+  el.style.width = Math.floor(naturalW * scale) + 'px';
+  el.style.height = Math.floor(naturalH * scale) + 'px';
+}
+
+// amostra a cor predominante da borda da midia (via canvas) e pinta o
+// fundo da tela com ela, para disfarcar as barras pretas de letterbox.
+// precisa que o elemento tenha crossOrigin='anonymous' e que o servidor
+// libere CORS (o raw.githubusercontent.com libera por padrao); se algo
+// der errado (ex: CORS bloqueado), cai de volta pro preto padrao.
+var stageOuterEl = document.getElementById('stage-outer');
+function applyBorderColor(mediaEl) {
+  if (!CONFIG.fillBorderColor) {
+    stageOuterEl.style.backgroundColor = '#050505';
+    return;
+  }
+  try {
+    var size = 20;
+    var canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    var ctx = canvas.getContext('2d');
+    ctx.drawImage(mediaEl, 0, 0, size, size);
+    var data = ctx.getImageData(0, 0, size, size).data;
+    var r = 0, g = 0, b = 0, count = 0;
+    for (var y = 0; y < size; y++) {
+      for (var x = 0; x < size; x++) {
+        if (x === 0 || y === 0 || x === size - 1 || y === size - 1) {
+          var idx = (y * size + x) * 4;
+          r += data[idx]; g += data[idx + 1]; b += data[idx + 2]; count++;
+        }
+      }
+    }
+    r = Math.round(r / count); g = Math.round(g / count); b = Math.round(b / count);
+    stageOuterEl.style.backgroundColor = 'rgb(' + r + ',' + g + ',' + b + ')';
+  } catch (e) {
+    // canvas "contaminado" (CORS) ou navegador sem suporte - mantem preto
+    stageOuterEl.style.backgroundColor = '#050505';
+  }
+}
+
+function extOf(name) {
+  var parts = name.split('.');
+  if (parts.length < 2) { return ''; }
+  return parts[parts.length - 1].toLowerCase();
+}
+
+function contains(arr, value) {
+  for (var i = 0; i < arr.length; i++) {
+    if (arr[i] === value) { return true; }
+  }
+  return false;
+}
+
+// ordenacao natural simples (para que "2-arquivo" venha antes de "10-arquivo")
+function naturalCompare(a, b) {
+  var ax = a.toLowerCase();
+  var bx = b.toLowerCase();
+  if (ax < bx) { return -1; }
+  if (ax > bx) { return 1; }
+  return 0;
+}
+
+function pad2(n) {
+  n = String(n);
+  if (n.length < 2) { return '0' + n; }
+  return n;
+}
+
+function apiUrl() {
+  return 'https://api.github.com/repos/' + CONFIG.githubUser + '/' +
+    CONFIG.githubRepo + '/contents/' + CONFIG.mediaFolder + '?ref=' + CONFIG.branch;
+}
+
+// config.json e escrito pelo admin.html (painel de gerenciamento) direto no
+// repositorio. Aqui a TV so le esse arquivo publico via raw.githubusercontent.com,
+// que nao exige autenticacao nem consome a cota da API do GitHub. Se o arquivo
+// nao existir ainda ou a leitura falhar, os valores padrao definidos em CONFIG
+// acima continuam valendo.
+function configUrl() {
+  return 'https://raw.githubusercontent.com/' + CONFIG.githubUser + '/' +
+    CONFIG.githubRepo + '/' + CONFIG.branch + '/config.json?t=' + new Date().getTime();
+}
+
+function loadConfig(done) {
+  var xhr = new XMLHttpRequest();
+  xhr.open('GET', configUrl(), true);
+  xhr.onreadystatechange = function () {
+    if (xhr.readyState !== 4) { return; }
+    if (xhr.status === 200) {
+      try {
+        var remote = JSON.parse(xhr.responseText);
+        for (var key in remote) {
+          if (remote.hasOwnProperty(key)) { CONFIG[key] = remote[key]; }
+        }
+      } catch (e) {
+        // config.json invalido - mantem os valores padrao do CONFIG
+      }
+    }
+    done();
+  };
+  xhr.onerror = function () { done(); };
+  xhr.send();
+}
+
+// requisicao via XMLHttpRequest (compativel com navegadores antigos, sem
+// depender de fetch/Promise)
+function fetchPlaylist(onSuccess, onError) {
+  var xhr = new XMLHttpRequest();
+  xhr.open('GET', apiUrl(), true);
+  try {
+    xhr.setRequestHeader('Accept', 'application/vnd.github+json');
+  } catch (e) {
+    // alguns navegadores antigos podem reclamar do header; ignora se falhar
+  }
+  xhr.onreadystatechange = function () {
+    if (xhr.readyState !== 4) { return; }
+    if (xhr.status === 200) {
+      var data;
+      try {
+        data = JSON.parse(xhr.responseText);
+      } catch (e) {
+        onError('Falha ao interpretar a resposta do GitHub.');
+        return;
+      }
+      var result = [];
+      for (var i = 0; i < data.length; i++) {
+        var item = data[i];
+        if (item.type !== 'file') { continue; }
+        var ext = extOf(item.name);
+        var isImage = contains(IMAGE_EXT, ext);
+        var isVideo = contains(VIDEO_EXT, ext);
+        if (!isImage && !isVideo) { continue; }
+        result.push({
+          name: item.name,
+          url: item.download_url,
+          type: isImage ? 'image' : 'video'
+        });
+      }
+      result.sort(function (a, b) { return naturalCompare(a.name, b.name); });
+      onSuccess(result);
+    } else if (xhr.status === 404) {
+      onError('Pasta "' + CONFIG.mediaFolder + '" nao encontrada em ' +
+        CONFIG.githubUser + '/' + CONFIG.githubRepo + '. Confira usuario, repositorio e branch no CONFIG.');
+    } else if (xhr.status === 403) {
+      onError('Limite de requisicoes da API do GitHub atingido. Nova tentativa em breve.');
+    } else {
+      onError('Falha ao carregar a lista de arquivos (HTTP ' + xhr.status + ').');
+    }
+  };
+  xhr.send();
+}
+
+function showEmpty(title, msg) {
+  emptyTitle.innerHTML = title;
+  emptyMsg.innerHTML = msg;
+  emptyEl.style.display = 'block';
+  document.getElementById('stage-outer').style.visibility = 'hidden';
+  progressBar.style.width = '0%';
+}
+
+function hideEmpty() {
+  emptyEl.style.display = 'none';
+  document.getElementById('stage-outer').style.visibility = 'visible';
+}
+
+function updateHud() {
+  if (!CONFIG.showHud) { return; }
+  var now = new Date();
+  var hh = pad2(now.getHours());
+  var mm = pad2(now.getMinutes());
+  var pos = playlist.length ? (index + 1) + '/' + playlist.length : '';
+  hud.innerHTML = pos + '  ' + hh + ':' + mm;
+}
+setInterval(updateHud, 15000);
+
+function clearTimers() {
+  if (advanceTimer) { clearTimeout(advanceTimer); advanceTimer = null; }
+  if (videoSafetyTimer) { clearTimeout(videoSafetyTimer); videoSafetyTimer = null; }
+  if (progressTimer) { clearInterval(progressTimer); progressTimer = null; }
+  if (currentAudio) {
+    try { currentAudio.pause(); } catch (e) { /* ignora */ }
+    currentAudio.src = '';
+    currentAudio = null;
+  }
+}
+
+// barra de progresso via setInterval simples, sem depender de CSS transition
+function startProgress(seconds) {
+  var startTime = new Date().getTime();
+  var totalMs = seconds * 1000;
+  progressBar.style.width = '0%';
+  progressTimer = setInterval(function () {
+    var elapsed = new Date().getTime() - startTime;
+    var pct = Math.min(100, (elapsed / totalMs) * 100);
+    progressBar.style.width = pct + '%';
+    if (pct >= 100) { clearInterval(progressTimer); progressTimer = null; }
+  }, 200);
+}
+
+function renderCurrent() {
+  var item = playlist[index];
+  updateHud();
+  stageInner.innerHTML = '';
+  var el;
+  if (item.type === 'image') {
+    el = document.createElement('img');
+    el.crossOrigin = 'anonymous'; // necessario para o canvas poder ler a cor da imagem
+    el.onload = function () {
+      fitToScreen(el, el.naturalWidth, el.naturalHeight);
+      applyBorderColor(el);
+    };
+    el.onerror = advance;
+    el.alt = item.name;
+    el.src = item.url;
+
+    var imgDuration = CONFIG.imageDurationSeconds;
+    if (CONFIG.musicEnabled && CONFIG.musicPlaylist.length > 0) {
+      currentAudio = document.createElement('audio');
+      currentAudio.src = CONFIG.musicPlaylist[musicIndex % CONFIG.musicPlaylist.length];
+      currentAudio.volume = CONFIG.musicVolume;
+      musicIndex++;
+      try { currentAudio.play(); } catch (e) { /* ignora falha de play() */ }
+      imgDuration = CONFIG.imageMusicDurationSeconds;
+    }
+    startProgress(imgDuration);
+    advanceTimer = setTimeout(advance, imgDuration * 1000);
+  } else {
+    el = document.createElement('video');
+    el.crossOrigin = 'anonymous'; // necessario para o canvas poder ler a cor do video
+    el.onloadedmetadata = function () { fitToScreen(el, el.videoWidth, el.videoHeight); };
+    el.onloadeddata = function () { applyBorderColor(el); };
+    el.onended = advance;
+    el.onerror = advance;
+    el.autoplay = true;
+    el.muted = CONFIG.startMuted;
+    el.volume = (CONFIG.videoVolumeOverrides && CONFIG.videoVolumeOverrides[item.name] !== undefined)
+      ? CONFIG.videoVolumeOverrides[item.name]
+      : CONFIG.targetVolume;
+    el.setAttribute('playsinline', 'true');
+    el.src = item.url;
+    progressBar.style.width = '0%';
+    // seguranca: se o video nao disparar 'ended', avanca sozinho em 3 minutos
+    videoSafetyTimer = setTimeout(advance, 3 * 60 * 1000);
+    try { el.play(); } catch (e) { /* ignora falha de play() */ }
+  }
+  stageInner.appendChild(el);
+}
+
+function advance() {
+  clearTimers();
+  if (playlist.length === 0) { return; }
+  index = (index + 1) % playlist.length;
+  renderCurrent();
+}
+
+function refreshPlaylist() {
+  fetchPlaylist(
+    function (list) {
+      playlist = list;
+      if (playlist.length === 0) {
+        clearTimers();
+        index = -1;
+        showEmpty('Nenhum arquivo encontrado',
+          'Arraste videos ou imagens para a pasta <code>/' + CONFIG.mediaFolder + '</code> no repositorio.');
+        return;
+      }
+      if (index === -1) {
+        hideEmpty();
+        advance();
+      }
+    },
+    function (errMsg) {
+      if (playlist.length === 0) {
+        showEmpty('Nao foi possivel carregar', errMsg);
+      }
+    }
+  );
+}
+
+loadConfig(function () {
+  hud.style.display = CONFIG.showHud ? 'block' : 'none';
+
+  refreshPlaylist();
+  setInterval(refreshPlaylist, CONFIG.pollIntervalMinutes * 60 * 1000);
+
+  // recarrega a pagina inteira de tempos em tempos, para que qualquer alteracao
+  // no config.json (feita pelo admin.html) ou no codigo (feita via commit)
+  // entre em vigor sem precisar mexer na TV manualmente
+  if (CONFIG.autoReloadHours > 0) {
+    setTimeout(function () {
+      window.location.reload();
+    }, CONFIG.autoReloadHours * 60 * 60 * 1000);
+  }
+});
+</script>
+</body>
+</html>

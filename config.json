@@ -1,0 +1,14 @@
+{
+  "imageDurationSeconds": 15,
+  "pollIntervalMinutes": 5,
+  "startMuted": true,
+  "showHud": true,
+  "autoReloadHours": 6,
+  "targetVolume": 0.8,
+  "videoVolumeOverrides": {},
+  "fillBorderColor": true,
+  "musicEnabled": false,
+  "musicPlaylist": [],
+  "imageMusicDurationSeconds": 40,
+  "musicVolume": 0.5
+}
