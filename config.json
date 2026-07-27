@@ -1,7 +1,7 @@
 {
   "imageDurationSeconds": 15,
   "pollIntervalMinutes": 5,
-  "startMuted": true,
+  "startMuted": false,
   "showHud": true,
   "autoReloadHours": 6,
   "targetVolume": 0.8,
