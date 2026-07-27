@@ -1,0 +1,696 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Painel — Player de Sinalização</title>
+<style>
+  :root {
+    --bg: #050505;
+    --panel: #101010;
+    --panel-2: #161616;
+    --line: #262626;
+    --text: #EDEDEA;
+    --text-dim: #8A8A85;
+    --accent: #FFB454;
+    --danger: #E2604F;
+    --ok: #6FBF8B;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; background: var(--bg); color: var(--text);
+    font-family: Arial, Helvetica, sans-serif;
+  }
+  body { padding: 32px 20px 80px; }
+  .wrap { max-width: 760px; margin: 0 auto; }
+
+  header.top { margin-bottom: 28px; }
+  header.top .eyebrow {
+    font-family: Consolas, Menlo, monospace;
+    font-size: 12px; letter-spacing: 2px; text-transform: uppercase;
+    color: var(--accent); margin: 0 0 6px;
+  }
+  header.top h1 { margin: 0; font-size: 26px; font-weight: 700; }
+  header.top p { margin: 6px 0 0; color: var(--text-dim); font-size: 14px; }
+  #who { display: none; float: right; font-size: 13px; color: var(--text-dim); }
+  #who button { margin-left: 8px; }
+
+  section.card {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 20px;
+    margin-bottom: 20px;
+  }
+  section.card h2 {
+    font-size: 13px; letter-spacing: 1.5px; text-transform: uppercase;
+    color: var(--text-dim); margin: 0 0 16px; font-weight: 600;
+  }
+
+  label { display: block; font-size: 13px; color: var(--text-dim); margin-bottom: 4px; }
+  input[type=text], input[type=password], input[type=number] {
+    width: 100%; background: var(--panel-2); border: 1px solid var(--line);
+    color: var(--text); border-radius: 6px; padding: 9px 10px; font-size: 14px;
+    font-family: Consolas, Menlo, monospace;
+  }
+  input:focus { outline: 1px solid var(--accent); border-color: var(--accent); }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
+  @media (max-width: 560px) { .row { grid-template-columns: 1fr; } }
+
+  button {
+    font-family: Arial, Helvetica, sans-serif; font-size: 14px; font-weight: 600;
+    border-radius: 6px; padding: 9px 16px; cursor: pointer; border: 1px solid transparent;
+  }
+  button.primary { background: var(--accent); color: #1a1200; }
+  button.primary:hover { background: #ffc270; }
+  button.ghost { background: transparent; border-color: var(--line); color: var(--text); }
+  button.ghost:hover { border-color: var(--accent); color: var(--accent); }
+  button.danger { background: transparent; border-color: var(--danger); color: var(--danger); }
+  button.danger:hover { background: var(--danger); color: #1a0a08; }
+  button:disabled { opacity: 0.4; cursor: default; }
+  button.small { padding: 6px 10px; font-size: 12px; }
+  button.link { background: none; border: none; color: var(--accent); padding: 0; font-weight: 400; text-decoration: underline; }
+
+  #status-line, #media-status, #config-status {
+    font-family: Consolas, Menlo, monospace; font-size: 12px; color: var(--text-dim);
+    margin-top: 10px; min-height: 16px; display: block;
+  }
+  .ok { color: var(--ok) !important; }
+  .err { color: var(--danger) !important; }
+
+  ul#media-list { list-style: none; margin: 0 0 14px; padding: 0; }
+  ul#media-list li {
+    display: flex; align-items: center; gap: 10px;
+    background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px;
+    padding: 8px 10px; margin-bottom: 8px; cursor: grab;
+  }
+  ul#media-list li.dragging { opacity: 0.4; }
+  ul#media-list li .handle { color: var(--text-dim); font-family: monospace; }
+  ul#media-list li .order-num {
+    font-family: Consolas, Menlo, monospace; color: var(--accent); font-size: 13px;
+    width: 22px; text-align: right; flex-shrink: 0;
+  }
+  ul#media-list li .thumb {
+    width: 40px; height: 40px; border-radius: 4px; object-fit: cover;
+    background: #000; flex-shrink: 0;
+  }
+  ul#media-list li .thumb.video-icon {
+    display: flex; align-items: center; justify-content: center;
+    font-family: monospace; font-size: 10px; color: var(--text-dim);
+  }
+  ul#media-list li .name { flex: 1; font-size: 14px; word-break: break-all; }
+  ul#media-list li .type-tag {
+    font-family: Consolas, Menlo, monospace; font-size: 10px; color: var(--text-dim);
+    text-transform: uppercase; border: 1px solid var(--line); border-radius: 4px; padding: 2px 5px;
+  }
+  #empty-media { color: var(--text-dim); font-size: 14px; padding: 10px 0; }
+
+  ul#music-list { list-style: none; margin: 0 0 12px; padding: 0; }
+  ul#music-list li {
+    display: flex; align-items: center; gap: 10px;
+    background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px;
+    padding: 8px 10px; margin-bottom: 8px;
+  }
+  ul#music-list li .name { flex: 1; font-size: 14px; word-break: break-all; }
+
+  .upload-drop {
+    border: 1px dashed var(--line); border-radius: 8px; padding: 20px;
+    text-align: center; color: var(--text-dim); font-size: 13px; margin-bottom: 12px;
+  }
+  .upload-drop.drag-over { border-color: var(--accent); color: var(--accent); }
+  #file-input { display: none; }
+
+  .checkbox-row { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; }
+  .checkbox-row input { width: auto; }
+  .checkbox-row label { margin: 0; color: var(--text); font-size: 14px; }
+
+  details summary { cursor: pointer; color: var(--text-dim); font-size: 13px; margin-top: 4px; }
+  textarea {
+    width: 100%; min-height: 70px; background: var(--panel-2); border: 1px solid var(--line);
+    color: var(--text); border-radius: 6px; padding: 9px 10px; font-size: 12px;
+    font-family: Consolas, Menlo, monospace; margin-top: 8px;
+  }
+
+  #main-area { display: none; }
+  .footer-note { color: var(--text-dim); font-size: 12px; text-align: center; margin-top: 24px; }
+  .footer-note a { color: var(--accent); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="top">
+    <span id="who"></span>
+    <p class="eyebrow">Painel de gerenciamento</p>
+    <h1>Player de Sinalização</h1>
+    <p>A TV só exibe. Todo o conteúdo é ajustado por aqui, pelo notebook.</p>
+  </header>
+
+  <section class="card" id="login-card">
+    <h2 id="login-title">Entrar</h2>
+    <div class="row">
+      <div>
+        <label for="in-gpid">GPID</label>
+        <input type="text" id="in-gpid" autocomplete="username">
+      </div>
+      <div>
+        <label for="in-password">Senha</label>
+        <input type="password" id="in-password" autocomplete="current-password">
+      </div>
+    </div>
+    <div class="row" id="invite-row" style="display:none;">
+      <div>
+        <label for="in-invite">Código de convite do time</label>
+        <input type="text" id="in-invite">
+      </div>
+    </div>
+    <button class="primary" id="btn-submit">Entrar</button>
+    <button class="link small" id="btn-toggle-mode" type="button" style="margin-left: 10px;">Ainda não tenho cadastro</button>
+    <span id="status-line"></span>
+  </section>
+
+  <div id="main-area">
+
+    <section class="card">
+      <h2>Mídias (<span id="media-count">0</span>)</h2>
+      <ul id="media-list"></ul>
+      <p id="empty-media" style="display:none;">Nenhuma mídia na pasta /media ainda.</p>
+      <button class="ghost" id="btn-save-order">Salvar ordem</button>
+      <span id="media-status"></span>
+    </section>
+
+    <section class="card">
+      <h2>Gerador de mídia</h2>
+      <p style="color: var(--text-dim); font-size: 13px; margin-top: -8px;">
+        O arquivo bruto não vai direto pra TV — primeiro ele passa por aqui,
+        que gera o vídeo final (com música e volume ajustados) e só então
+        insere em Mídias. PDF ainda não é suportado.
+      </p>
+
+      <div class="upload-drop" id="upload-drop">
+        Arraste um arquivo aqui ou <button class="ghost small" id="btn-pick-file" type="button">escolher arquivo</button>
+        <input type="file" id="file-input" accept="image/*,video/*">
+      </div>
+      <p id="picked-file-name" style="color: var(--text-dim); font-size: 13px; display:none;"></p>
+
+      <div class="checkbox-row" style="margin-top: 14px;">
+        <input type="radio" name="gen-mode" id="mode-simple" value="simple" checked style="width:auto;">
+        <label for="mode-simple">Geração simplificada — 1 min, música automática (vídeo enviado: só silencia + música)</label>
+      </div>
+      <div class="checkbox-row">
+        <input type="radio" name="gen-mode" id="mode-detailed" value="detailed" style="width:auto;">
+        <label for="mode-detailed">Geração detalhada — eu escolho duração, música e áudio</label>
+      </div>
+
+      <div id="detailed-fields" style="display:none; margin-top: 10px;">
+        <div class="row">
+          <div id="detailed-duration-wrap">
+            <label for="gen-duration">Duração (segundos, só pra imagem)</label>
+            <input type="number" id="gen-duration" min="1" value="60">
+          </div>
+          <div>
+            <label for="gen-music">Música</label>
+            <select id="gen-music"><option value="">Nenhuma</option></select>
+          </div>
+        </div>
+        <div class="checkbox-row" id="keep-audio-wrap" style="display:none;">
+          <input type="checkbox" id="gen-keep-audio">
+          <label for="gen-keep-audio">Manter o áudio original do vídeo (em vez de silenciar + música)</label>
+        </div>
+      </div>
+
+      <button class="primary" id="btn-generate" style="margin-top: 14px;" disabled>Gerar e inserir</button>
+      <span id="generate-status"></span>
+    </section>
+
+    <section class="card">
+      <h2>Biblioteca de música (<span id="music-count">0</span>)</h2>
+      <p style="color: var(--text-dim); font-size: 13px; margin-top: -8px;">
+        Faixas livres de direitos autorais usadas pelo gerador. Envie arquivos
+        baixados do Pixabay Music, YouTube Audio Library ou Free Music Archive.
+      </p>
+      <ul id="music-list"></ul>
+      <p id="empty-music" style="display:none; color: var(--text-dim); font-size: 14px;">Nenhuma música na biblioteca ainda.</p>
+      <button class="ghost small" id="btn-pick-music-file" type="button">Enviar música</button>
+      <input type="file" id="music-file-input" accept="audio/*" multiple style="display:none;">
+      <span id="music-status"></span>
+    </section>
+
+    <section class="card">
+      <h2>Configurações de exibição</h2>
+
+      <div class="row">
+        <div>
+          <label for="cfg-imageDuration">Duração de cada imagem (segundos)</label>
+          <input type="number" id="cfg-imageDuration" min="1">
+        </div>
+        <div>
+          <label for="cfg-pollInterval">Verificar novidades a cada (minutos)</label>
+          <input type="number" id="cfg-pollInterval" min="1">
+        </div>
+      </div>
+
+      <div class="row">
+        <div>
+          <label for="cfg-volume">Volume dos vídeos (0 a 1)</label>
+          <input type="number" id="cfg-volume" min="0" max="1" step="0.1">
+        </div>
+        <div>
+          <label for="cfg-autoReload">Recarregar a página a cada (horas)</label>
+          <input type="number" id="cfg-autoReload" min="0">
+        </div>
+      </div>
+
+      <div class="checkbox-row">
+        <input type="checkbox" id="cfg-startMuted"><label for="cfg-startMuted">Vídeos começam mudos</label>
+      </div>
+      <div class="checkbox-row">
+        <input type="checkbox" id="cfg-showHud"><label for="cfg-showHud">Mostrar relógio/posição no canto</label>
+      </div>
+      <div class="checkbox-row">
+        <input type="checkbox" id="cfg-fillBorder"><label for="cfg-fillBorder">Preencher fundo com a cor da borda da mídia</label>
+      </div>
+
+      <div class="checkbox-row">
+        <input type="checkbox" id="cfg-musicEnabled"><label for="cfg-musicEnabled">Tocar música durante as imagens</label>
+      </div>
+      <div class="row">
+        <div>
+          <label for="cfg-imageMusicDuration">Duração da imagem com música (segundos)</label>
+          <input type="number" id="cfg-imageMusicDuration" min="1">
+        </div>
+        <div>
+          <label for="cfg-musicVolume">Volume da música (0 a 1)</label>
+          <input type="number" id="cfg-musicVolume" min="0" max="1" step="0.1">
+        </div>
+      </div>
+
+      <details>
+        <summary>Ajustes avançados (volume por vídeo, playlist de música)</summary>
+        <label style="margin-top:10px;">Volume individual por arquivo (JSON)</label>
+        <textarea id="cfg-videoOverrides" spellcheck="false">{}</textarea>
+        <label style="margin-top:10px;">Playlist de música — links diretos, um por linha (JSON de lista)</label>
+        <textarea id="cfg-musicPlaylist" spellcheck="false">[]</textarea>
+      </details>
+
+      <div style="margin-top: 16px;">
+        <button class="primary" id="btn-save-config">Salvar configurações</button>
+        <span id="config-status"></span>
+      </div>
+    </section>
+
+  </div>
+
+  <p class="footer-note">Publicado via <a href="https://brenoq-a.github.io/reprodutor_video/" target="_blank">GitHub Pages</a></p>
+</div>
+
+<script>
+(function () {
+  // Endereço do backend (troque pelo seu domínio depois de publicar no Render/Fly.io).
+  var BACKEND_URL = 'https://SEU-BACKEND.onrender.com';
+
+  var mode = 'login'; // 'login' | 'register'
+  var media = [];
+  var dragSrcIndex = null;
+
+  var DEFAULT_CONFIG = {
+    imageDurationSeconds: 15,
+    pollIntervalMinutes: 5,
+    startMuted: true,
+    showHud: true,
+    autoReloadHours: 6,
+    targetVolume: 0.8,
+    videoVolumeOverrides: {},
+    fillBorderColor: true,
+    musicEnabled: false,
+    musicPlaylist: [],
+    imageMusicDurationSeconds: 40,
+    musicVolume: 0.5
+  };
+
+  function $(id) { return document.getElementById(id); }
+  function setStatus(el, msg, kind) { el.textContent = msg; el.className = kind || ''; }
+
+  function api(path, options) {
+    options = options || {};
+    options.credentials = 'include';
+    return fetch(BACKEND_URL + path, options).then(function (res) {
+      if (res.status === 401) { showLogin('Sessão expirada. Entre novamente.'); }
+      return res.json().then(function (data) {
+        if (!res.ok) { throw new Error(data.error || ('HTTP ' + res.status)); }
+        return data;
+      });
+    });
+  }
+
+  // ---------- login / cadastro ----------
+  $('btn-toggle-mode').addEventListener('click', function () {
+    mode = mode === 'login' ? 'register' : 'login';
+    $('login-title').textContent = mode === 'login' ? 'Entrar' : 'Criar cadastro';
+    $('btn-submit').textContent = mode === 'login' ? 'Entrar' : 'Cadastrar';
+    $('btn-toggle-mode').textContent = mode === 'login' ? 'Ainda não tenho cadastro' : 'Já tenho cadastro';
+    $('invite-row').style.display = mode === 'register' ? 'grid' : 'none';
+    setStatus($('status-line'), '', '');
+  });
+
+  $('btn-submit').addEventListener('click', function () {
+    var gpid = $('in-gpid').value.trim();
+    var password = $('in-password').value;
+    var statusEl = $('status-line');
+    if (!gpid || !password) { setStatus(statusEl, 'Preencha GPID e senha.', 'err'); return; }
+
+    var path = mode === 'login' ? '/api/auth/login' : '/api/auth/register';
+    var body = { gpid: gpid, password: password };
+    if (mode === 'register') { body.inviteCode = $('in-invite').value.trim(); }
+
+    setStatus(statusEl, mode === 'login' ? 'Entrando...' : 'Cadastrando...', '');
+    fetch(BACKEND_URL + path, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    })
+      .then(function (res) { return res.json().then(function (data) { return { ok: res.ok, data: data }; }); })
+      .then(function (r) {
+        if (!r.ok) { setStatus(statusEl, r.data.error || 'Falha.', 'err'); return; }
+        onLoggedIn(r.data.gpid);
+      })
+      .catch(function (err) { setStatus(statusEl, 'Não foi possível falar com o servidor: ' + err.message, 'err'); });
+  });
+
+  function showLogin(msg) {
+    $('main-area').style.display = 'none';
+    $('login-card').style.display = 'block';
+    $('who').style.display = 'none';
+    if (msg) { setStatus($('status-line'), msg, 'err'); }
+  }
+
+  function onLoggedIn(gpid) {
+    $('login-card').style.display = 'none';
+    $('main-area').style.display = 'block';
+    $('who').style.display = 'inline';
+    $('who').innerHTML = gpid + ' <button class="ghost small" id="btn-logout" type="button">Sair</button>';
+    $('btn-logout').addEventListener('click', function () {
+      fetch(BACKEND_URL + '/api/auth/logout', { method: 'POST', credentials: 'include' }).then(function () {
+        window.location.reload();
+      });
+    });
+    loadMedia();
+    loadConfig();
+    loadMusic();
+  }
+
+  // tenta restaurar sessão salva
+  fetch(BACKEND_URL + '/api/auth/session', { credentials: 'include' })
+    .then(function (res) { return res.ok ? res.json() : null; })
+    .then(function (data) { if (data) { onLoggedIn(data.gpid); } })
+    .catch(function () { /* backend fora do ar ou primeira visita - fica na tela de login */ });
+
+  // ---------- mídia: listar ----------
+  function loadMedia() {
+    api('/api/media').then(function (data) {
+      media = data.media;
+      renderMedia();
+    }).catch(function (err) { setStatus($('media-status'), err.message, 'err'); });
+  }
+
+  function displayName(name) { return name.replace(/^\d+[-_ ]+/, ''); }
+
+  function renderMedia() {
+    var list = $('media-list');
+    list.innerHTML = '';
+    $('media-count').textContent = media.length;
+    $('empty-media').style.display = media.length === 0 ? 'block' : 'none';
+
+    media.forEach(function (item, idx) {
+      var li = document.createElement('li');
+      li.draggable = true;
+      li.dataset.index = idx;
+
+      var num = document.createElement('span');
+      num.className = 'order-num';
+      num.textContent = String(idx + 1).padStart(2, '0');
+      li.appendChild(num);
+
+      var handle = document.createElement('span');
+      handle.className = 'handle';
+      handle.textContent = '⋮⋮';
+      li.appendChild(handle);
+
+      if (item.type === 'image') {
+        var img = document.createElement('img');
+        img.className = 'thumb';
+        img.src = item.url;
+        li.appendChild(img);
+      } else {
+        var vic = document.createElement('div');
+        vic.className = 'thumb video-icon';
+        vic.textContent = 'VÍDEO';
+        li.appendChild(vic);
+      }
+
+      var name = document.createElement('span');
+      name.className = 'name';
+      name.textContent = displayName(item.name);
+      li.appendChild(name);
+
+      var tag = document.createElement('span');
+      tag.className = 'type-tag';
+      tag.textContent = item.type === 'image' ? 'imagem' : 'vídeo';
+      li.appendChild(tag);
+
+      var del = document.createElement('button');
+      del.className = 'danger small';
+      del.textContent = 'Excluir';
+      del.addEventListener('click', function () { deleteMedia(item); });
+      li.appendChild(del);
+
+      attachDragHandlers(li);
+      list.appendChild(li);
+    });
+  }
+
+  function attachDragHandlers(li) {
+    li.addEventListener('dragstart', function () {
+      dragSrcIndex = Number(li.dataset.index);
+      li.classList.add('dragging');
+    });
+    li.addEventListener('dragend', function () { li.classList.remove('dragging'); });
+    li.addEventListener('dragover', function (e) { e.preventDefault(); });
+    li.addEventListener('drop', function (e) {
+      e.preventDefault();
+      var targetIndex = Number(li.dataset.index);
+      if (dragSrcIndex === null || targetIndex === dragSrcIndex) { return; }
+      var moved = media.splice(dragSrcIndex, 1)[0];
+      media.splice(targetIndex, 0, moved);
+      dragSrcIndex = null;
+      renderMedia();
+    });
+  }
+
+  $('btn-save-order').addEventListener('click', function () {
+    var statusEl = $('media-status');
+    setStatus(statusEl, 'Salvando ordem...', '');
+    api('/api/media/reorder', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ order: media.map(function (m) { return m.name; }) })
+    })
+      .then(function () { setStatus(statusEl, 'Ordem salva.', 'ok'); loadMedia(); })
+      .catch(function (err) { setStatus(statusEl, err.message, 'err'); loadMedia(); });
+  });
+
+  function deleteMedia(item) {
+    if (!confirm('Excluir "' + displayName(item.name) + '" da TV?')) { return; }
+    var statusEl = $('media-status');
+    setStatus(statusEl, 'Excluindo...', '');
+    api('/api/media/' + encodeURIComponent(item.name), { method: 'DELETE' })
+      .then(function () { setStatus(statusEl, 'Excluído.', 'ok'); loadMedia(); })
+      .catch(function (err) { setStatus(statusEl, err.message, 'err'); });
+  }
+
+  // ---------- gerador de mídia (etapa de processamento) ----------
+  var IMAGE_EXT = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
+  var pickedFile = null;
+  var musicTracks = [];
+
+  var dropZone = $('upload-drop');
+  var fileInput = $('file-input');
+  $('btn-pick-file').addEventListener('click', function () { fileInput.click(); });
+  fileInput.addEventListener('change', function () { setPickedFile(fileInput.files[0]); });
+  dropZone.addEventListener('dragover', function (e) { e.preventDefault(); dropZone.classList.add('drag-over'); });
+  dropZone.addEventListener('dragleave', function () { dropZone.classList.remove('drag-over'); });
+  dropZone.addEventListener('drop', function (e) {
+    e.preventDefault();
+    dropZone.classList.remove('drag-over');
+    setPickedFile(e.dataTransfer.files[0]);
+  });
+
+  function extOf(name) {
+    var parts = name.split('.');
+    return parts.length < 2 ? '' : parts[parts.length - 1].toLowerCase();
+  }
+
+  function setPickedFile(file) {
+    pickedFile = file || null;
+    var label = $('picked-file-name');
+    if (pickedFile) {
+      label.textContent = 'Selecionado: ' + pickedFile.name;
+      label.style.display = 'block';
+    } else {
+      label.style.display = 'none';
+    }
+    $('btn-generate').disabled = !pickedFile;
+    updateGeneratorFieldsVisibility();
+  }
+
+  function isDetailedMode() { return $('mode-detailed').checked; }
+
+  function updateGeneratorFieldsVisibility() {
+    $('detailed-fields').style.display = isDetailedMode() ? 'block' : 'none';
+    var isVideo = pickedFile && !IMAGE_EXT.includes(extOf(pickedFile.name));
+    $('detailed-duration-wrap').style.display = isVideo ? 'none' : 'block';
+    $('keep-audio-wrap').style.display = isVideo ? 'flex' : 'none';
+  }
+
+  $('mode-simple').addEventListener('change', updateGeneratorFieldsVisibility);
+  $('mode-detailed').addEventListener('change', updateGeneratorFieldsVisibility);
+
+  $('btn-generate').addEventListener('click', function () {
+    if (!pickedFile) { return; }
+    var statusEl = $('generate-status');
+    var form = new FormData();
+    form.append('file', pickedFile);
+    var path = '/api/process/simple';
+    if (isDetailedMode()) {
+      path = '/api/process/detailed';
+      form.append('durationSeconds', $('gen-duration').value);
+      form.append('musicName', $('gen-music').value);
+      form.append('keepOriginalAudio', $('gen-keep-audio').checked ? 'true' : 'false');
+    }
+    $('btn-generate').disabled = true;
+    setStatus(statusEl, 'Processando (pode levar até 1 minuto)...', '');
+    api(path, { method: 'POST', body: form })
+      .then(function (data) {
+        setStatus(statusEl, 'Gerado e inserido: ' + data.name, 'ok');
+        setPickedFile(null);
+        fileInput.value = '';
+        loadMedia();
+      })
+      .catch(function (err) { setStatus(statusEl, err.message, 'err'); })
+      .finally(function () { $('btn-generate').disabled = !pickedFile; });
+  });
+
+  // ---------- biblioteca de música ----------
+  function loadMusic() {
+    api('/api/music').then(function (data) {
+      musicTracks = data.music;
+      renderMusic();
+    }).catch(function (err) { setStatus($('music-status'), err.message, 'err'); });
+  }
+
+  function renderMusic() {
+    var list = $('music-list');
+    list.innerHTML = '';
+    $('music-count').textContent = musicTracks.length;
+    $('empty-music').style.display = musicTracks.length === 0 ? 'block' : 'none';
+
+    var select = $('gen-music');
+    select.innerHTML = '<option value="">Nenhuma</option>';
+
+    musicTracks.forEach(function (track) {
+      var li = document.createElement('li');
+      var name = document.createElement('span');
+      name.className = 'name';
+      name.textContent = track.name;
+      li.appendChild(name);
+      var del = document.createElement('button');
+      del.className = 'danger small';
+      del.textContent = 'Excluir';
+      del.addEventListener('click', function () { deleteMusic(track); });
+      li.appendChild(del);
+      list.appendChild(li);
+
+      var opt = document.createElement('option');
+      opt.value = track.name;
+      opt.textContent = track.name;
+      select.appendChild(opt);
+    });
+  }
+
+  function deleteMusic(track) {
+    if (!confirm('Excluir "' + track.name + '" da biblioteca?')) { return; }
+    var statusEl = $('music-status');
+    api('/api/music/' + encodeURIComponent(track.name), { method: 'DELETE' })
+      .then(function () { setStatus(statusEl, 'Excluída.', 'ok'); loadMusic(); })
+      .catch(function (err) { setStatus(statusEl, err.message, 'err'); });
+  }
+
+  var musicFileInput = $('music-file-input');
+  $('btn-pick-music-file').addEventListener('click', function () { musicFileInput.click(); });
+  musicFileInput.addEventListener('change', function () {
+    var files = Array.prototype.slice.call(musicFileInput.files);
+    if (files.length === 0) { return; }
+    var statusEl = $('music-status');
+    setStatus(statusEl, 'Enviando ' + files.length + ' faixa(s)...', '');
+    var form = new FormData();
+    files.forEach(function (f) { form.append('files', f); });
+    api('/api/music/upload', { method: 'POST', body: form })
+      .then(function () { setStatus(statusEl, 'Envio concluído.', 'ok'); loadMusic(); musicFileInput.value = ''; })
+      .catch(function (err) { setStatus(statusEl, err.message, 'err'); });
+  });
+
+  // ---------- configurações ----------
+  function loadConfig() {
+    api('/api/config').then(function (data) {
+      fillConfigForm(Object.assign({}, DEFAULT_CONFIG, data.config || {}));
+    }).catch(function (err) { setStatus($('config-status'), err.message, 'err'); });
+  }
+
+  function fillConfigForm(cfg) {
+    $('cfg-imageDuration').value = cfg.imageDurationSeconds;
+    $('cfg-pollInterval').value = cfg.pollIntervalMinutes;
+    $('cfg-volume').value = cfg.targetVolume;
+    $('cfg-autoReload').value = cfg.autoReloadHours;
+    $('cfg-startMuted').checked = !!cfg.startMuted;
+    $('cfg-showHud').checked = !!cfg.showHud;
+    $('cfg-fillBorder').checked = !!cfg.fillBorderColor;
+    $('cfg-musicEnabled').checked = !!cfg.musicEnabled;
+    $('cfg-imageMusicDuration').value = cfg.imageMusicDurationSeconds;
+    $('cfg-musicVolume').value = cfg.musicVolume;
+    $('cfg-videoOverrides').value = JSON.stringify(cfg.videoVolumeOverrides || {}, null, 2);
+    $('cfg-musicPlaylist').value = JSON.stringify(cfg.musicPlaylist || [], null, 2);
+  }
+
+  $('btn-save-config').addEventListener('click', function () {
+    var statusEl = $('config-status');
+    var overrides, playlist;
+    try { overrides = JSON.parse($('cfg-videoOverrides').value || '{}'); }
+    catch (e) { setStatus(statusEl, 'JSON inválido em "volume individual".', 'err'); return; }
+    try { playlist = JSON.parse($('cfg-musicPlaylist').value || '[]'); }
+    catch (e) { setStatus(statusEl, 'JSON inválido em "playlist de música".', 'err'); return; }
+
+    var cfg = {
+      imageDurationSeconds: Number($('cfg-imageDuration').value) || DEFAULT_CONFIG.imageDurationSeconds,
+      pollIntervalMinutes: Number($('cfg-pollInterval').value) || DEFAULT_CONFIG.pollIntervalMinutes,
+      startMuted: $('cfg-startMuted').checked,
+      showHud: $('cfg-showHud').checked,
+      autoReloadHours: Number($('cfg-autoReload').value),
+      targetVolume: Number($('cfg-volume').value),
+      videoVolumeOverrides: overrides,
+      fillBorderColor: $('cfg-fillBorder').checked,
+      musicEnabled: $('cfg-musicEnabled').checked,
+      musicPlaylist: playlist,
+      imageMusicDurationSeconds: Number($('cfg-imageMusicDuration').value) || DEFAULT_CONFIG.imageMusicDurationSeconds,
+      musicVolume: Number($('cfg-musicVolume').value)
+    };
+
+    setStatus(statusEl, 'Salvando...', '');
+    api('/api/config', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cfg) })
+      .then(function () { setStatus(statusEl, 'Configurações salvas. A TV aplica no próximo recarregamento automático.', 'ok'); })
+      .catch(function (err) { setStatus(statusEl, err.message, 'err'); });
+  });
+})();
+</script>
+</body>
+</html>
