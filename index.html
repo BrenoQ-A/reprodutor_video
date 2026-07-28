@@ -2,29 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="utf-8">
-<title>Player de Sinalizacao</title>
-<!--
-  PLAYER DE PLAYLIST - VERSAO COMPATIVEL COM NAVEGADORES ANTIGOS
-  (testado para funcionar em navegadores Samsung de ~2010, sem suporte a
-  fetch, async/await, let/const, template literals, arrow functions ou
-  variaveis CSS)
-
-  INSTRUCOES:
-  1) Suba videos/imagens para a pasta /media deste repositorio.
-  2) Prefixe os nomes com numeros (01-, 02-...) se quiser controlar a ordem.
-  3) Preencha githubUser e githubRepo no objeto CONFIG abaixo antes de publicar.
-  4) O repositorio precisa ser PUBLICO.
-  5) Ative o GitHub Pages em Settings > Pages > Deploy from branch.
-
-  GERENCIAMENTO (sem mexer na TV):
-  Esta pagina e so exibicao. Midias e configuracoes sao editadas pelo
-  notebook em admin.html, que grava direto no repositorio via API do
-  GitHub. As configuracoes ficam em /config.json na raiz do repositorio;
-  o objeto CONFIG abaixo serve apenas como valor padrao caso esse arquivo
-  ainda nao exista. A TV recarrega a pagina inteira a cada
-  autoReloadHours, e e nesse momento que um config.json novo entra em
-  vigor.
--->
+<title>Player de Sinalização</title>
 <style>
   html, body {
     margin: 0;
@@ -36,13 +14,11 @@
     font-family: Arial, Helvetica, sans-serif;
     color: #EDEDEA;
   }
-
-  /* Centralizacao via display:table, compativel com navegadores bem antigos
-     (sem depender de flexbox) */
   #stage-outer {
     display: table;
     width: 100%;
     height: 100%;
+    background: #050505;
   }
   #stage-inner {
     display: table-cell;
@@ -53,7 +29,6 @@
     display: block;
     margin: 0 auto;
   }
-
   #hud {
     position: absolute;
     right: 18px;
@@ -63,7 +38,6 @@
     color: #B8B8B4;
     z-index: 10;
   }
-
   #progress-track {
     position: absolute;
     left: 0;
@@ -78,28 +52,31 @@
     width: 0%;
     background: #FFB454;
   }
-
-  #empty {
+  #message {
     position: absolute;
-    top: 0; left: 0; width: 100%; height: 100%;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
     text-align: center;
-    padding-top: 40%;
+    padding-top: 35%;
+    background: #050505;
+    z-index: 20;
   }
-  #empty h1 {
-    font-size: 16px;
+  #message h1 {
+    font-size: 17px;
     letter-spacing: 2px;
     text-transform: uppercase;
-    font-weight: bold;
-    color: #EDEDEA;
     margin: 0 0 12px 0;
   }
-  #empty p {
+  #message p {
     font-size: 14px;
     color: #B8B8B4;
     margin: 0 auto;
-    max-width: 420px;
+    max-width: 680px;
+    line-height: 1.5;
   }
-  #empty code {
+  #message code {
     font-family: monospace;
     background: #222;
     padding: 2px 6px;
@@ -107,404 +84,460 @@
 </style>
 </head>
 <body>
-
-<div id="stage-outer">
-  <div id="stage-inner"></div>
-</div>
+<div id="stage-outer"><div id="stage-inner"></div></div>
 <div id="progress-track"><div id="progress-bar"></div></div>
 <div id="hud"></div>
-
-<div id="empty">
-  <h1 id="empty-title">Carregando playlist</h1>
-  <p id="empty-msg">Buscando arquivos...</p>
+<div id="message">
+  <h1 id="message-title">Iniciando player</h1>
+  <p id="message-text">Carregando configuração...</p>
 </div>
 
 <script>
-/* ============================================================
-   CONFIGURACAO - edite antes de publicar
-   ============================================================ */
-var CONFIG = {
-  githubUser: 'BrenoQ-A',
-  githubRepo: 'reprodutor_video',
-  branch: 'main',
-  mediaFolder: 'media',
-  imageDurationSeconds: 15,
-  pollIntervalMinutes: 5,
-  startMuted: true,
-  showHud: true,
-  autoReloadHours: 6,
-
-  // --- VOLUME ---
-  // Este navegador nao tem como "ouvir" o video e medir o volume sozinho
-  // (nao existe Web Audio API nesta versao). O volume abaixo e aplicado
-  // igualmente a TODOS os videos; se um video especifico estiver muito
-  // baixo ou alto mesmo assim, ajuste-o individualmente em
-  // videoVolumeOverrides usando o nome exato do arquivo.
-  targetVolume: 0.8,          // 0 (mudo) a 1 (maximo) - aplicado a todo video
-  videoVolumeOverrides: {
-    // 'nome-do-arquivo.mp4': 0.5   // exemplo: reduz so este video
-  },
-
-  // --- PREENCHIMENTO DAS BORDAS ---
-  // Quando ativado, identifica a cor predominante da borda da imagem/video
-  // e pinta o fundo da tela com essa cor, em vez de preto.
-  fillBorderColor: true,
-
-  // --- MUSICA SOB IMAGENS ---
-  // Quando ativado, toca uma musica da lista abaixo enquanto uma IMAGEM
-  // esta na tela, e usa imageMusicDurationSeconds no lugar de
-  // imageDurationSeconds para essa imagem. Videos nao sao afetados (eles ja
-  // tem audio proprio).
-  musicEnabled: false,
-  musicPlaylist: [
-    // cole aqui os links diretos (download_url) das musicas, uma por linha:
-    // 'https://raw.githubusercontent.com/usuario/repo/main/media/musica1.mp3',
-  ],
-  imageMusicDurationSeconds: 40,
-  musicVolume: 0.5
-};
-/* ============================================================ */
-
-var IMAGE_EXT = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
-var VIDEO_EXT = ['mp4', 'webm', 'ogg'];
-
-var stageInner = document.getElementById('stage-inner');
-var emptyEl = document.getElementById('empty');
-var emptyTitle = document.getElementById('empty-title');
-var emptyMsg = document.getElementById('empty-msg');
-var progressBar = document.getElementById('progress-bar');
-var hud = document.getElementById('hud');
-
-var playlist = [];
-var index = -1;
-var advanceTimer = null;
-var videoSafetyTimer = null;
-var progressTimer = null;
-var currentAudio = null;
-var musicIndex = 0;
-
-// calcula o maior tamanho possivel (em pixels) que respeita a proporcao
-// original da midia e cabe na tela - substitui o max-width/max-height em
-// porcentagem, que nao funciona de forma confiavel neste navegador antigo
-function fitToScreen(el, naturalW, naturalH) {
-  if (!naturalW || !naturalH) { return; }
-  var screenW = window.innerWidth;
-  var screenH = window.innerHeight;
-  var scale = Math.min(screenW / naturalW, screenH / naturalH);
-  el.style.width = Math.floor(naturalW * scale) + 'px';
-  el.style.height = Math.floor(naturalH * scale) + 'px';
-}
-
-// amostra a cor predominante da borda da midia (via canvas) e pinta o
-// fundo da tela com ela, para disfarcar as barras pretas de letterbox.
-// precisa que o elemento tenha crossOrigin='anonymous' e que o servidor
-// libere CORS (o raw.githubusercontent.com libera por padrao); se algo
-// der errado (ex: CORS bloqueado), cai de volta pro preto padrao.
-//
-// importante: a miniatura usada pra amostrar precisa manter a MESMA
-// proporcao da midia original. Se for espremida num quadrado, cores do
-// meio da imagem vazam pra dentro do anel de "borda" amostrado e o
-// resultado sai errado (ex: um cartaz branco/laranja virando bege).
-var stageOuterEl = document.getElementById('stage-outer');
-function applyBorderColor(mediaEl, naturalW, naturalH) {
-  if (!CONFIG.fillBorderColor) {
-    stageOuterEl.style.backgroundColor = '#050505';
-    return;
-  }
-  try {
-    if (!naturalW || !naturalH) { throw new Error('sem dimensoes da midia'); }
-    var maxSize = 60;
-    var aspect = naturalW / naturalH;
-    var cw = aspect >= 1 ? maxSize : Math.max(1, Math.round(maxSize * aspect));
-    var ch = aspect >= 1 ? Math.max(1, Math.round(maxSize / aspect)) : maxSize;
-
-    var canvas = document.createElement('canvas');
-    canvas.width = cw;
-    canvas.height = ch;
-    var ctx = canvas.getContext('2d');
-    ctx.drawImage(mediaEl, 0, 0, cw, ch);
-    var data = ctx.getImageData(0, 0, cw, ch).data;
-
-    var edgeThickness = 1; // so a borda real, sem puxar cor do miolo da midia
-    var r = 0, g = 0, b = 0, alphaSum = 0;
-    for (var y = 0; y < ch; y++) {
-      for (var x = 0; x < cw; x++) {
-        if (x < edgeThickness || y < edgeThickness || x >= cw - edgeThickness || y >= ch - edgeThickness) {
-          var idx = (y * cw + x) * 4;
-          // pondera pela opacidade: pixels transparentes ou semi-transparentes
-          // (cantos arredondados, anti-aliasing, sombra suave) nao devem puxar
-          // a media pra preto so por terem alpha baixo.
-          var alpha = data[idx + 3] / 255;
-          r += data[idx] * alpha;
-          g += data[idx + 1] * alpha;
-          b += data[idx + 2] * alpha;
-          alphaSum += alpha;
-        }
-      }
-    }
-    if (alphaSum < 0.5) { throw new Error('borda totalmente transparente'); }
-    r = Math.round(r / alphaSum); g = Math.round(g / alphaSum); b = Math.round(b / alphaSum);
-    stageOuterEl.style.backgroundColor = 'rgb(' + r + ',' + g + ',' + b + ')';
-  } catch (e) {
-    // canvas "contaminado" (CORS), navegador sem suporte, ou sem dimensoes - mantem preto
-    stageOuterEl.style.backgroundColor = '#050505';
-  }
-}
-
-function extOf(name) {
-  var parts = name.split('.');
-  if (parts.length < 2) { return ''; }
-  return parts[parts.length - 1].toLowerCase();
-}
-
-function contains(arr, value) {
-  for (var i = 0; i < arr.length; i++) {
-    if (arr[i] === value) { return true; }
-  }
-  return false;
-}
-
-// ordenacao natural simples (para que "2-arquivo" venha antes de "10-arquivo")
-function naturalCompare(a, b) {
-  var ax = a.toLowerCase();
-  var bx = b.toLowerCase();
-  if (ax < bx) { return -1; }
-  if (ax > bx) { return 1; }
-  return 0;
-}
-
-function pad2(n) {
-  n = String(n);
-  if (n.length < 2) { return '0' + n; }
-  return n;
-}
-
-function apiUrl() {
-  return 'https://api.github.com/repos/' + CONFIG.githubUser + '/' +
-    CONFIG.githubRepo + '/contents/' + CONFIG.mediaFolder + '?ref=' + CONFIG.branch;
-}
-
-// config.json e escrito pelo admin.html (painel de gerenciamento) direto no
-// repositorio. Aqui a TV so le esse arquivo publico via raw.githubusercontent.com,
-// que nao exige autenticacao nem consome a cota da API do GitHub. Se o arquivo
-// nao existir ainda ou a leitura falhar, os valores padrao definidos em CONFIG
-// acima continuam valendo.
-function configUrl() {
-  return 'https://raw.githubusercontent.com/' + CONFIG.githubUser + '/' +
-    CONFIG.githubRepo + '/' + CONFIG.branch + '/config.json?t=' + new Date().getTime();
-}
-
-function loadConfig(done) {
-  var xhr = new XMLHttpRequest();
-  xhr.open('GET', configUrl(), true);
-  xhr.onreadystatechange = function () {
-    if (xhr.readyState !== 4) { return; }
-    if (xhr.status === 200) {
-      try {
-        var remote = JSON.parse(xhr.responseText);
-        for (var key in remote) {
-          if (remote.hasOwnProperty(key)) { CONFIG[key] = remote[key]; }
-        }
-      } catch (e) {
-        // config.json invalido - mantem os valores padrao do CONFIG
-      }
-    }
-    done();
+(function () {
+  /*
+    Compatível com Samsung Tizen 2.3 / WebKit 538.1 (linha 2015).
+    Implementação deliberadamente restrita a JavaScript ES5 e CSS clássico.
+  */
+  var BOOTSTRAP = {
+    playlistUrl: '',
+    configUrl: '',
+    bootstrapRefreshMinutes: 30
   };
-  xhr.onerror = function () { done(); };
-  xhr.send();
-}
 
-// requisicao via XMLHttpRequest (compativel com navegadores antigos, sem
-// depender de fetch/Promise)
-function fetchPlaylist(onSuccess, onError) {
-  var xhr = new XMLHttpRequest();
-  xhr.open('GET', apiUrl(), true);
-  try {
-    xhr.setRequestHeader('Accept', 'application/vnd.github+json');
-  } catch (e) {
-    // alguns navegadores antigos podem reclamar do header; ignora se falhar
+  var CONFIG = {
+    imageDurationSeconds: 15,
+    pollIntervalMinutes: 5,
+    startMuted: false,
+    showHud: true,
+    autoReloadHours: 6,
+    targetVolume: 0.8,
+    videoVolumeOverrides: {},
+    fillBorderColor: true,
+    musicEnabled: false,
+    musicPlaylist: [],
+    imageMusicDurationSeconds: 40,
+    musicVolume: 0.5
+  };
+
+  var IMAGE_EXT = ['jpg', 'jpeg', 'png'];
+  var VIDEO_EXT = ['mp4'];
+  var playlist = [];
+  var index = -1;
+  var currentId = null;
+  var advanceTimer = null;
+  var videoSafetyTimer = null;
+  var progressTimer = null;
+  var refreshTimer = null;
+  var currentAudio = null;
+  var musicIndex = 0;
+  var failuresInCycle = 0;
+  var startedAt = new Date().getTime();
+
+  var stageOuter = document.getElementById('stage-outer');
+  var stageInner = document.getElementById('stage-inner');
+  var message = document.getElementById('message');
+  var messageTitle = document.getElementById('message-title');
+  var messageText = document.getElementById('message-text');
+  var progressBar = document.getElementById('progress-bar');
+  var hud = document.getElementById('hud');
+
+  function contains(array, value) {
+    var i;
+    for (i = 0; i < array.length; i++) {
+      if (array[i] === value) { return true; }
+    }
+    return false;
   }
-  xhr.onreadystatechange = function () {
-    if (xhr.readyState !== 4) { return; }
-    if (xhr.status === 200) {
+
+  function extOf(name) {
+    var parts = String(name || '').split('.');
+    if (parts.length < 2) { return ''; }
+    return parts[parts.length - 1].toLowerCase();
+  }
+
+  function merge(target, source) {
+    var key;
+    if (!source) { return target; }
+    for (key in source) {
+      if (source.hasOwnProperty(key)) { target[key] = source[key]; }
+    }
+    return target;
+  }
+
+  function cacheBust(url) {
+    return url + (url.indexOf('?') === -1 ? '?' : '&') + 't=' + new Date().getTime();
+  }
+
+  function requestJson(url, onSuccess, onError) {
+    var xhr = new XMLHttpRequest();
+    xhr.open('GET', cacheBust(url), true);
+    xhr.onreadystatechange = function () {
       var data;
-      try {
-        data = JSON.parse(xhr.responseText);
-      } catch (e) {
-        onError('Falha ao interpretar a resposta do GitHub.');
-        return;
+      if (xhr.readyState !== 4) { return; }
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try {
+          data = JSON.parse(xhr.responseText);
+          onSuccess(data);
+        } catch (error) {
+          onError('JSON inválido em ' + url);
+        }
+      } else {
+        onError('HTTP ' + xhr.status + ' ao acessar ' + url);
       }
-      var result = [];
-      for (var i = 0; i < data.length; i++) {
-        var item = data[i];
-        if (item.type !== 'file') { continue; }
-        var ext = extOf(item.name);
-        var isImage = contains(IMAGE_EXT, ext);
-        var isVideo = contains(VIDEO_EXT, ext);
-        if (!isImage && !isVideo) { continue; }
+    };
+    xhr.onerror = function () { onError('Falha de rede ao acessar ' + url); };
+    xhr.timeout = 30000;
+    xhr.ontimeout = function () { onError('Tempo esgotado ao acessar ' + url); };
+    xhr.send();
+  }
+
+  function showMessage(title, text) {
+    messageTitle.innerHTML = title;
+    messageText.innerHTML = text;
+    message.style.display = 'block';
+    stageOuter.style.visibility = 'hidden';
+    progressBar.style.width = '0%';
+  }
+
+  function hideMessage() {
+    message.style.display = 'none';
+    stageOuter.style.visibility = 'visible';
+  }
+
+  function pad2(number) {
+    var text = String(number);
+    return text.length < 2 ? '0' + text : text;
+  }
+
+  function updateHud() {
+    var now;
+    var position;
+    if (!CONFIG.showHud) {
+      hud.style.display = 'none';
+      return;
+    }
+    hud.style.display = 'block';
+    now = new Date();
+    position = playlist.length && index >= 0 ? (index + 1) + '/' + playlist.length : '';
+    hud.innerHTML = position + '  ' + pad2(now.getHours()) + ':' + pad2(now.getMinutes());
+  }
+
+  function fitToScreen(element, naturalWidth, naturalHeight) {
+    var scale;
+    if (!naturalWidth || !naturalHeight) { return; }
+    scale = Math.min(window.innerWidth / naturalWidth, window.innerHeight / naturalHeight);
+    element.style.width = Math.floor(naturalWidth * scale) + 'px';
+    element.style.height = Math.floor(naturalHeight * scale) + 'px';
+  }
+
+  function applyBorderColor(mediaElement, naturalWidth, naturalHeight) {
+    var maxSize;
+    var aspect;
+    var canvasWidth;
+    var canvasHeight;
+    var canvas;
+    var context;
+    var data;
+    var red = 0;
+    var green = 0;
+    var blue = 0;
+    var alphaTotal = 0;
+    var x;
+    var y;
+    var offset;
+    var alpha;
+
+    if (!CONFIG.fillBorderColor) {
+      stageOuter.style.backgroundColor = '#050505';
+      return;
+    }
+
+    try {
+      if (!naturalWidth || !naturalHeight) { throw new Error('sem dimensões'); }
+      maxSize = 60;
+      aspect = naturalWidth / naturalHeight;
+      canvasWidth = aspect >= 1 ? maxSize : Math.max(1, Math.round(maxSize * aspect));
+      canvasHeight = aspect >= 1 ? Math.max(1, Math.round(maxSize / aspect)) : maxSize;
+      canvas = document.createElement('canvas');
+      canvas.width = canvasWidth;
+      canvas.height = canvasHeight;
+      context = canvas.getContext('2d');
+      context.drawImage(mediaElement, 0, 0, canvasWidth, canvasHeight);
+      data = context.getImageData(0, 0, canvasWidth, canvasHeight).data;
+
+      for (y = 0; y < canvasHeight; y++) {
+        for (x = 0; x < canvasWidth; x++) {
+          if (x === 0 || y === 0 || x === canvasWidth - 1 || y === canvasHeight - 1) {
+            offset = (y * canvasWidth + x) * 4;
+            alpha = data[offset + 3] / 255;
+            red += data[offset] * alpha;
+            green += data[offset + 1] * alpha;
+            blue += data[offset + 2] * alpha;
+            alphaTotal += alpha;
+          }
+        }
+      }
+
+      if (alphaTotal < 0.5) { throw new Error('borda transparente'); }
+      stageOuter.style.backgroundColor =
+        'rgb(' + Math.round(red / alphaTotal) + ',' +
+        Math.round(green / alphaTotal) + ',' +
+        Math.round(blue / alphaTotal) + ')';
+    } catch (error) {
+      stageOuter.style.backgroundColor = '#050505';
+    }
+  }
+
+  function clearPlayback() {
+    if (advanceTimer) { clearTimeout(advanceTimer); advanceTimer = null; }
+    if (videoSafetyTimer) { clearTimeout(videoSafetyTimer); videoSafetyTimer = null; }
+    if (progressTimer) { clearInterval(progressTimer); progressTimer = null; }
+    if (currentAudio) {
+      try { currentAudio.pause(); } catch (error) {}
+      currentAudio.src = '';
+      currentAudio = null;
+    }
+    stageInner.innerHTML = '';
+  }
+
+  function startTimedProgress(seconds) {
+    var start = new Date().getTime();
+    var total = seconds * 1000;
+    progressBar.style.width = '0%';
+    progressTimer = setInterval(function () {
+      var elapsed = new Date().getTime() - start;
+      var percent = Math.min(100, elapsed / total * 100);
+      progressBar.style.width = percent + '%';
+    }, 250);
+  }
+
+  function mediaFailed(item, detail) {
+    failuresInCycle += 1;
+    if (failuresInCycle >= playlist.length) {
+      clearPlayback();
+      showMessage(
+        'Nenhuma mídia pôde ser reproduzida',
+        'Último arquivo: <code>' + item.name + '</code><br>' +
+        detail + '<br>A playlist será verificada novamente em breve.'
+      );
+      setTimeout(refreshPlaylist, 60000);
+      return;
+    }
+    advance();
+  }
+
+  function renderCurrent() {
+    var item = playlist[index];
+    var element;
+    var duration;
+    var override;
+
+    if (!item) { return; }
+    currentId = item.id || item.name;
+    updateHud();
+    stageInner.innerHTML = '';
+    progressBar.style.width = '0%';
+
+    if (item.type === 'image') {
+      element = document.createElement('img');
+      element.crossOrigin = 'anonymous';
+      element.alt = item.name;
+      element.onload = function () {
+        fitToScreen(element, element.naturalWidth, element.naturalHeight);
+        applyBorderColor(element, element.naturalWidth, element.naturalHeight);
+      };
+      element.onerror = function () { mediaFailed(item, 'Falha ao carregar a imagem.'); };
+      stageInner.appendChild(element);
+      element.src = item.url;
+
+      duration = CONFIG.imageDurationSeconds;
+      if (CONFIG.musicEnabled && CONFIG.musicPlaylist.length > 0) {
+        currentAudio = document.createElement('audio');
+        currentAudio.src = CONFIG.musicPlaylist[musicIndex % CONFIG.musicPlaylist.length];
+        currentAudio.volume = CONFIG.musicVolume;
+        musicIndex += 1;
+        try { currentAudio.play(); } catch (error) {}
+        duration = CONFIG.imageMusicDurationSeconds;
+      }
+      startTimedProgress(duration);
+      advanceTimer = setTimeout(advance, duration * 1000);
+      return;
+    }
+
+    element = document.createElement('video');
+    element.crossOrigin = 'anonymous';
+    element.autoplay = true;
+    element.muted = !!CONFIG.startMuted;
+    override = CONFIG.videoVolumeOverrides && CONFIG.videoVolumeOverrides[item.name];
+    element.volume = override !== undefined ? Number(override) : Number(CONFIG.targetVolume);
+    element.setAttribute('playsinline', 'true');
+    element.setAttribute('preload', 'auto');
+
+    element.onloadedmetadata = function () {
+      fitToScreen(element, element.videoWidth, element.videoHeight);
+      if (videoSafetyTimer) { clearTimeout(videoSafetyTimer); }
+      duration = Number(element.duration) || Number(item.durationSeconds) || 14400;
+      videoSafetyTimer = setTimeout(function () {
+        mediaFailed(item, 'O vídeo ultrapassou o tempo esperado.');
+      }, (duration + 90) * 1000);
+    };
+    element.onloadeddata = function () {
+      applyBorderColor(element, element.videoWidth, element.videoHeight);
+    };
+    element.ontimeupdate = function () {
+      if (element.duration && isFinite(element.duration)) {
+        progressBar.style.width =
+          Math.min(100, element.currentTime / element.duration * 100) + '%';
+      }
+    };
+    element.onended = function () {
+      failuresInCycle = 0;
+      advance();
+    };
+    element.onerror = function () {
+      var code = element.error ? element.error.code : 'desconhecido';
+      mediaFailed(item, 'Erro de vídeo ' + code + '.');
+    };
+
+    stageInner.appendChild(element);
+    element.src = item.url;
+    try { element.load(); } catch (error) {}
+    try { element.play(); } catch (error2) {}
+
+    videoSafetyTimer = setTimeout(function () {
+      mediaFailed(item, 'A TV não iniciou o vídeo.');
+    }, 120000);
+  }
+
+  function advance() {
+    clearPlayback();
+    if (!playlist.length) { return; }
+    index = (index + 1) % playlist.length;
+    renderCurrent();
+  }
+
+  function normalizePlaylist(data) {
+    var source = data && data.items ? data.items : data;
+    var result = [];
+    var i;
+    var item;
+    var extension;
+
+    if (!source || typeof source.length !== 'number') { return result; }
+    for (i = 0; i < source.length; i++) {
+      item = source[i];
+      if (!item || !item.url || !item.name) { continue; }
+      extension = extOf(item.name);
+      if (item.type === 'video' || contains(VIDEO_EXT, extension)) {
         result.push({
+          id: item.id || item.key || item.name,
           name: item.name,
-          url: item.download_url,
-          type: isImage ? 'image' : 'video'
+          url: item.url,
+          type: 'video',
+          durationSeconds: item.durationSeconds
+        });
+      } else if (item.type === 'image' || contains(IMAGE_EXT, extension)) {
+        result.push({
+          id: item.id || item.key || item.name,
+          name: item.name,
+          url: item.url,
+          type: 'image'
         });
       }
-      result.sort(function (a, b) { return naturalCompare(a.name, b.name); });
-      onSuccess(result);
-    } else if (xhr.status === 404) {
-      onError('Pasta "' + CONFIG.mediaFolder + '" nao encontrada em ' +
-        CONFIG.githubUser + '/' + CONFIG.githubRepo + '. Confira usuario, repositorio e branch no CONFIG.');
-    } else if (xhr.status === 403) {
-      onError('Limite de requisicoes da API do GitHub atingido. Nova tentativa em breve.');
-    } else {
-      onError('Falha ao carregar a lista de arquivos (HTTP ' + xhr.status + ').');
     }
-  };
-  xhr.send();
-}
-
-function showEmpty(title, msg) {
-  emptyTitle.innerHTML = title;
-  emptyMsg.innerHTML = msg;
-  emptyEl.style.display = 'block';
-  document.getElementById('stage-outer').style.visibility = 'hidden';
-  progressBar.style.width = '0%';
-}
-
-function hideEmpty() {
-  emptyEl.style.display = 'none';
-  document.getElementById('stage-outer').style.visibility = 'visible';
-}
-
-function updateHud() {
-  if (!CONFIG.showHud) { return; }
-  var now = new Date();
-  var hh = pad2(now.getHours());
-  var mm = pad2(now.getMinutes());
-  var pos = playlist.length ? (index + 1) + '/' + playlist.length : '';
-  hud.innerHTML = pos + '  ' + hh + ':' + mm;
-}
-setInterval(updateHud, 15000);
-
-function clearTimers() {
-  if (advanceTimer) { clearTimeout(advanceTimer); advanceTimer = null; }
-  if (videoSafetyTimer) { clearTimeout(videoSafetyTimer); videoSafetyTimer = null; }
-  if (progressTimer) { clearInterval(progressTimer); progressTimer = null; }
-  if (currentAudio) {
-    try { currentAudio.pause(); } catch (e) { /* ignora */ }
-    currentAudio.src = '';
-    currentAudio = null;
+    return result;
   }
-}
 
-// barra de progresso via setInterval simples, sem depender de CSS transition
-function startProgress(seconds) {
-  var startTime = new Date().getTime();
-  var totalMs = seconds * 1000;
-  progressBar.style.width = '0%';
-  progressTimer = setInterval(function () {
-    var elapsed = new Date().getTime() - startTime;
-    var pct = Math.min(100, (elapsed / totalMs) * 100);
-    progressBar.style.width = pct + '%';
-    if (pct >= 100) { clearInterval(progressTimer); progressTimer = null; }
-  }, 200);
-}
-
-function renderCurrent() {
-  var item = playlist[index];
-  updateHud();
-  stageInner.innerHTML = '';
-  var el;
-  if (item.type === 'image') {
-    el = document.createElement('img');
-    el.crossOrigin = 'anonymous'; // necessario para o canvas poder ler a cor da imagem
-    el.onload = function () {
-      fitToScreen(el, el.naturalWidth, el.naturalHeight);
-      applyBorderColor(el, el.naturalWidth, el.naturalHeight);
-    };
-    el.onerror = advance;
-    el.alt = item.name;
-    el.src = item.url;
-
-    var imgDuration = CONFIG.imageDurationSeconds;
-    if (CONFIG.musicEnabled && CONFIG.musicPlaylist.length > 0) {
-      currentAudio = document.createElement('audio');
-      currentAudio.src = CONFIG.musicPlaylist[musicIndex % CONFIG.musicPlaylist.length];
-      currentAudio.volume = CONFIG.musicVolume;
-      musicIndex++;
-      try { currentAudio.play(); } catch (e) { /* ignora falha de play() */ }
-      imgDuration = CONFIG.imageMusicDurationSeconds;
+  function refreshPlaylist() {
+    if (!BOOTSTRAP.playlistUrl) {
+      showMessage(
+        'Player ainda não configurado',
+        'Preencha <code>playlistUrl</code> no arquivo <code>player-config.json</code>.'
+      );
+      return;
     }
-    startProgress(imgDuration);
-    advanceTimer = setTimeout(advance, imgDuration * 1000);
-  } else {
-    el = document.createElement('video');
-    el.crossOrigin = 'anonymous'; // necessario para o canvas poder ler a cor do video
-    el.onloadedmetadata = function () { fitToScreen(el, el.videoWidth, el.videoHeight); };
-    el.onloadeddata = function () { applyBorderColor(el, el.videoWidth, el.videoHeight); };
-    el.onended = advance;
-    el.onerror = advance;
-    el.autoplay = true;
-    el.muted = CONFIG.startMuted;
-    el.volume = (CONFIG.videoVolumeOverrides && CONFIG.videoVolumeOverrides[item.name] !== undefined)
-      ? CONFIG.videoVolumeOverrides[item.name]
-      : CONFIG.targetVolume;
-    el.setAttribute('playsinline', 'true');
-    el.src = item.url;
-    progressBar.style.width = '0%';
-    // seguranca: se o video nao disparar 'ended', avanca sozinho em 3 minutos
-    videoSafetyTimer = setTimeout(advance, 3 * 60 * 1000);
-    try { el.play(); } catch (e) { /* ignora falha de play() */ }
-  }
-  stageInner.appendChild(el);
-}
 
-function advance() {
-  clearTimers();
-  if (playlist.length === 0) { return; }
-  index = (index + 1) % playlist.length;
-  renderCurrent();
-}
+    requestJson(BOOTSTRAP.playlistUrl, function (data) {
+      var updated = normalizePlaylist(data);
+      var i;
+      playlist = updated;
 
-function refreshPlaylist() {
-  fetchPlaylist(
-    function (list) {
-      playlist = list;
-      if (playlist.length === 0) {
-        clearTimers();
+      if (!playlist.length) {
+        clearPlayback();
         index = -1;
-        showEmpty('Nenhum arquivo encontrado',
-          'Arraste videos ou imagens para a pasta <code>/' + CONFIG.mediaFolder + '</code> no repositorio.');
+        showMessage('Nenhuma mídia publicada', 'Envie um vídeo pelo painel administrativo.');
+        schedulePlaylistRefresh();
         return;
       }
-      if (index === -1) {
-        hideEmpty();
+
+      if (currentId) {
+        for (i = 0; i < playlist.length; i++) {
+          if (playlist[i].id === currentId) {
+            index = i;
+            break;
+          }
+        }
+      }
+
+      if (stageInner.innerHTML === '' || index === -1) {
+        hideMessage();
+        index = -1;
+        failuresInCycle = 0;
         advance();
       }
-    },
-    function (errMsg) {
-      if (playlist.length === 0) {
-        showEmpty('Nao foi possivel carregar', errMsg);
+      schedulePlaylistRefresh();
+    }, function (error) {
+      if (!playlist.length) {
+        showMessage('Falha ao carregar playlist', error);
       }
-    }
-  );
-}
-
-loadConfig(function () {
-  hud.style.display = CONFIG.showHud ? 'block' : 'none';
-
-  refreshPlaylist();
-  setInterval(refreshPlaylist, CONFIG.pollIntervalMinutes * 60 * 1000);
-
-  // recarrega a pagina inteira de tempos em tempos, para que qualquer alteracao
-  // no config.json (feita pelo admin.html) ou no codigo (feita via commit)
-  // entre em vigor sem precisar mexer na TV manualmente
-  if (CONFIG.autoReloadHours > 0) {
-    setTimeout(function () {
-      window.location.reload();
-    }, CONFIG.autoReloadHours * 60 * 60 * 1000);
+      schedulePlaylistRefresh();
+    });
   }
-});
+
+  function schedulePlaylistRefresh() {
+    if (refreshTimer) { clearTimeout(refreshTimer); }
+    refreshTimer = setTimeout(
+      refreshPlaylist,
+      Math.max(1, Number(CONFIG.pollIntervalMinutes) || 5) * 60 * 1000
+    );
+  }
+
+  function loadRuntimeConfig(done) {
+    if (!BOOTSTRAP.configUrl) {
+      done();
+      return;
+    }
+    requestJson(BOOTSTRAP.configUrl, function (remote) {
+      merge(CONFIG, remote);
+      done();
+    }, function () {
+      done();
+    });
+  }
+
+  function start() {
+    updateHud();
+    setInterval(updateHud, 15000);
+    loadRuntimeConfig(function () {
+      refreshPlaylist();
+      if (CONFIG.autoReloadHours > 0) {
+        setTimeout(function () {
+          window.location.reload();
+        }, CONFIG.autoReloadHours * 60 * 60 * 1000);
+      }
+    });
+  }
+
+  requestJson('player-config.json', function (remoteBootstrap) {
+    merge(BOOTSTRAP, remoteBootstrap);
+    start();
+  }, function () {
+    showMessage(
+      'Configuração não encontrada',
+      'Não foi possível carregar <code>player-config.json</code>.'
+    );
+  });
+})();
 </script>
 </body>
 </html>
