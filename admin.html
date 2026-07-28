@@ -118,7 +118,7 @@
     text-align: center; color: var(--text-dim); font-size: 13px; margin-bottom: 12px;
   }
   .upload-drop.drag-over { border-color: var(--accent); color: var(--accent); }
-  #file-input { display: none; }
+  #file-input, #video-file-input { display: none; }
 
   .checkbox-row { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; }
   .checkbox-row input { width: auto; }
@@ -180,32 +180,47 @@
     </section>
 
     <section class="card">
-      <h2>Gerador de mídia</h2>
+      <h2>Upload de vídeos prontos</h2>
       <p style="color: var(--text-dim); font-size: 13px; margin-top: -8px;">
-        O arquivo bruto não vai direto pra TV — primeiro ele passa por aqui,
-        que gera o vídeo final (com música e volume ajustados) e só então
-        insere em Mídias. PDF ainda não é suportado.
+        Envie vídeos já finalizados. Antes de publicar, o sistema apenas
+        otimiza o arquivo para o formato compatível com a televisão.
+      </p>
+
+      <div class="upload-drop" id="video-upload-drop">
+        Arraste um vídeo aqui ou <button class="ghost small" id="btn-pick-video" type="button">escolher vídeo</button>
+        <input type="file" id="video-file-input" accept="video/*,.mp4,.mov,.mkv,.avi,.webm,.mpeg,.mpg">
+      </div>
+      <p id="picked-video-name" style="color: var(--text-dim); font-size: 13px; display:none;"></p>
+      <button class="primary" id="btn-upload-video" style="margin-top: 14px;" disabled>Enviar vídeo</button>
+      <span id="video-upload-status"></span>
+    </section>
+
+    <section class="card">
+      <h2>Conversor de imagem para vídeo</h2>
+      <p style="color: var(--text-dim); font-size: 13px; margin-top: -8px;">
+        Transforme uma imagem JPG ou PNG em um vídeo com duração e música
+        opcionais. O resultado será inserido automaticamente em Mídias.
       </p>
 
       <div class="upload-drop" id="upload-drop">
-        Arraste um arquivo aqui ou <button class="ghost small" id="btn-pick-file" type="button">escolher arquivo</button>
-        <input type="file" id="file-input" accept="image/*,video/*">
+        Arraste uma imagem aqui ou <button class="ghost small" id="btn-pick-file" type="button">escolher imagem</button>
+        <input type="file" id="file-input" accept=".jpg,.jpeg,.png,image/jpeg,image/png">
       </div>
       <p id="picked-file-name" style="color: var(--text-dim); font-size: 13px; display:none;"></p>
 
       <div class="checkbox-row" style="margin-top: 14px;">
         <input type="radio" name="gen-mode" id="mode-simple" value="simple" checked style="width:auto;">
-        <label for="mode-simple">Geração simplificada — 1 min, música automática (vídeo enviado: só silencia + música)</label>
+        <label for="mode-simple">Conversão simplificada — 1 minuto e música automática</label>
       </div>
       <div class="checkbox-row">
         <input type="radio" name="gen-mode" id="mode-detailed" value="detailed" style="width:auto;">
-        <label for="mode-detailed">Geração detalhada — eu escolho duração, música e áudio</label>
+        <label for="mode-detailed">Conversão detalhada — escolher duração e música</label>
       </div>
 
       <div id="detailed-fields" style="display:none; margin-top: 10px;">
         <div class="row">
-          <div id="detailed-duration-wrap">
-            <label for="gen-duration">Duração (segundos, só pra imagem)</label>
+          <div>
+            <label for="gen-duration">Duração do vídeo (segundos)</label>
             <input type="number" id="gen-duration" min="1" value="60">
           </div>
           <div>
@@ -213,13 +228,9 @@
             <select id="gen-music"><option value="">Nenhuma</option></select>
           </div>
         </div>
-        <div class="checkbox-row" id="keep-audio-wrap" style="display:none;">
-          <input type="checkbox" id="gen-keep-audio">
-          <label for="gen-keep-audio">Manter o áudio original do vídeo (em vez de silenciar + música)</label>
-        </div>
       </div>
 
-      <button class="primary" id="btn-generate" style="margin-top: 14px;" disabled>Gerar e inserir</button>
+      <button class="primary" id="btn-generate" style="margin-top: 14px;" disabled>Converter e inserir</button>
       <span id="generate-status"></span>
     </section>
 
@@ -576,8 +587,79 @@
       .catch(function (err) { setStatus(statusEl, err.message, 'err'); });
   }
 
-  // ---------- gerador de mídia (etapa de processamento) ----------
-  var IMAGE_EXT = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
+  // ---------- upload de vídeos prontos ----------
+  var VIDEO_EXT = ['mp4', 'webm', 'ogg', 'mov', 'mkv', 'avi', 'mpeg', 'mpg'];
+  var pickedVideo = null;
+  var videoDropZone = $('video-upload-drop');
+  var videoFileInput = $('video-file-input');
+
+  $('btn-pick-video').addEventListener('click', function () { videoFileInput.click(); });
+  videoFileInput.addEventListener('change', function () {
+    setPickedVideo(videoFileInput.files[0]);
+  });
+  videoDropZone.addEventListener('dragover', function (e) {
+    e.preventDefault();
+    videoDropZone.classList.add('drag-over');
+  });
+  videoDropZone.addEventListener('dragleave', function () {
+    videoDropZone.classList.remove('drag-over');
+  });
+  videoDropZone.addEventListener('drop', function (e) {
+    e.preventDefault();
+    videoDropZone.classList.remove('drag-over');
+    setPickedVideo(e.dataTransfer.files[0]);
+  });
+
+  function extOf(name) {
+    var parts = name.split('.');
+    return parts.length < 2 ? '' : parts[parts.length - 1].toLowerCase();
+  }
+
+  function setPickedVideo(file) {
+    var statusEl = $('video-upload-status');
+    if (file && VIDEO_EXT.indexOf(extOf(file.name)) === -1) {
+      pickedVideo = null;
+      setStatus(statusEl, 'Selecione um arquivo de vídeo compatível.', 'err');
+    } else {
+      pickedVideo = file || null;
+      setStatus(statusEl, '', '');
+    }
+
+    var label = $('picked-video-name');
+    if (pickedVideo) {
+      label.textContent = 'Selecionado: ' + pickedVideo.name + ' (' +
+        (pickedVideo.size / 1024 / 1024).toFixed(1) + ' MB)';
+      label.style.display = 'block';
+    } else {
+      label.style.display = 'none';
+    }
+    $('btn-upload-video').disabled = !pickedVideo;
+  }
+
+  $('btn-upload-video').addEventListener('click', function () {
+    if (!pickedVideo) { return; }
+    var statusEl = $('video-upload-status');
+    var form = new FormData();
+    form.append('file', pickedVideo);
+    $('btn-upload-video').disabled = true;
+    setStatus(statusEl, 'Enviando 0%...', '');
+    uploadApi('/api/media/upload', form, function (percent) {
+      setStatus(statusEl, percent < 100
+        ? 'Enviando ' + percent + '%...'
+        : 'Upload concluído. Otimizando para a televisão...', '');
+    })
+      .then(function (data) {
+        setStatus(statusEl, 'Vídeo publicado: ' + data.name, 'ok');
+        setPickedVideo(null);
+        videoFileInput.value = '';
+        loadMedia();
+      })
+      .catch(function (err) { setStatus(statusEl, err.message, 'err'); })
+      .finally(function () { $('btn-upload-video').disabled = !pickedVideo; });
+  });
+
+  // ---------- conversor de imagem para vídeo ----------
+  var IMAGE_EXT = ['jpg', 'jpeg', 'png'];
   var pickedFile = null;
   var musicTracks = [];
 
@@ -593,13 +675,16 @@
     setPickedFile(e.dataTransfer.files[0]);
   });
 
-  function extOf(name) {
-    var parts = name.split('.');
-    return parts.length < 2 ? '' : parts[parts.length - 1].toLowerCase();
-  }
-
   function setPickedFile(file) {
-    pickedFile = file || null;
+    var statusEl = $('generate-status');
+    if (file && IMAGE_EXT.indexOf(extOf(file.name)) === -1) {
+      pickedFile = null;
+      setStatus(statusEl, 'O conversor aceita somente imagens JPG ou PNG.', 'err');
+    } else {
+      pickedFile = file || null;
+      setStatus(statusEl, '', '');
+    }
+
     var label = $('picked-file-name');
     if (pickedFile) {
       label.textContent = 'Selecionado: ' + pickedFile.name + ' (' +
@@ -609,16 +694,12 @@
       label.style.display = 'none';
     }
     $('btn-generate').disabled = !pickedFile;
-    updateGeneratorFieldsVisibility();
   }
 
   function isDetailedMode() { return $('mode-detailed').checked; }
 
   function updateGeneratorFieldsVisibility() {
     $('detailed-fields').style.display = isDetailedMode() ? 'block' : 'none';
-    var isVideo = pickedFile && !IMAGE_EXT.includes(extOf(pickedFile.name));
-    $('detailed-duration-wrap').style.display = isVideo ? 'none' : 'block';
-    $('keep-audio-wrap').style.display = isVideo ? 'flex' : 'none';
   }
 
   $('mode-simple').addEventListener('change', updateGeneratorFieldsVisibility);
@@ -634,7 +715,6 @@
       path = '/api/process/detailed';
       form.append('durationSeconds', $('gen-duration').value);
       form.append('musicId', $('gen-music').value);
-      form.append('keepOriginalAudio', $('gen-keep-audio').checked ? 'true' : 'false');
     }
     $('btn-generate').disabled = true;
     setStatus(statusEl, 'Enviando 0%...', '');
@@ -644,7 +724,7 @@
         : 'Upload concluído. Convertendo para o formato da TV...', '');
     })
       .then(function (data) {
-        setStatus(statusEl, 'Gerado e inserido: ' + data.name, 'ok');
+        setStatus(statusEl, 'Imagem convertida e inserida: ' + data.name, 'ok');
         setPickedFile(null);
         fileInput.value = '';
         loadMedia();
