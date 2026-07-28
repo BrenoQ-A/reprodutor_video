@@ -406,13 +406,32 @@
         resolve(data);
       };
       xhr.onerror = function () {
-        reject(new Error('A conexão com o servidor foi interrompida.'));
+        var error = new Error('A conexão com o servidor foi interrompida.');
+        error.code = 'NETWORK_ERROR';
+        reject(error);
       };
       xhr.ontimeout = function () {
-        reject(new Error('O processamento demorou além do limite da conexão.'));
+        var error = new Error('O processamento demorou além do limite da conexão.');
+        error.code = 'NETWORK_ERROR';
+        reject(error);
       };
       xhr.send(form);
     });
+  }
+
+  function waitForBackend(attempt) {
+    return fetch(BACKEND_URL + '/health', { credentials: 'include' })
+      .then(function (res) {
+        if (!res.ok) { throw new Error('Backend indisponível.'); }
+      })
+      .catch(function (error) {
+        if (attempt >= 12) { throw error; }
+        return new Promise(function (resolve) {
+          setTimeout(resolve, 5000);
+        }).then(function () {
+          return waitForBackend(attempt + 1);
+        });
+      });
   }
 
   // ---------- login / cadastro ----------
@@ -661,51 +680,108 @@
     var currentIndex = 0;
     $('btn-upload-video').disabled = true;
 
+    function shortFailureSummary() {
+      var visible = failed.slice(0, 3).join('; ');
+      if (failed.length > 3) {
+        visible += '; e mais ' + (failed.length - 3) + ' arquivo(s)';
+      }
+      return visible;
+    }
+
+    function finishQueue() {
+      videoFileInput.value = '';
+      setPickedVideos([]);
+      loadMedia();
+      if (failed.length) {
+        setStatus(
+          statusEl,
+          published.length + ' vídeo(s) publicado(s) e ' + failed.length +
+            ' com falha: ' + shortFailureSummary(),
+          'err'
+        );
+      } else {
+        setStatus(statusEl, published.length + ' vídeo(s) publicado(s) com sucesso.', 'ok');
+      }
+    }
+
+    function pauseQueue(file, error) {
+      var remaining = queue.slice(currentIndex + 1);
+      videoFileInput.value = '';
+      setPickedVideos(remaining);
+      loadMedia();
+      setStatus(
+        statusEl,
+        'O backend não voltou em 1 minuto. ' + file.name + ' falhou (' +
+          error.message + '). A fila foi pausada com ' + remaining.length +
+          ' vídeo(s) aguardando; use o botão para continuar quando o serviço voltar.',
+        'err'
+      );
+    }
+
     function uploadNext() {
       if (currentIndex >= queue.length) {
-        videoFileInput.value = '';
-        setPickedVideos([]);
-        loadMedia();
-        if (failed.length) {
-          setStatus(
-            statusEl,
-            published.length + ' vídeo(s) publicado(s) e ' + failed.length +
-              ' com falha: ' + failed.join('; '),
-            'err'
-          );
-        } else {
-          setStatus(statusEl, published.length + ' vídeo(s) publicado(s) com sucesso.', 'ok');
-        }
+        finishQueue();
         return;
       }
 
       var file = queue[currentIndex];
       var position = currentIndex + 1;
-      var form = new FormData();
-      form.append('file', file);
-      setStatus(
-        statusEl,
-        'Vídeo ' + position + ' de ' + queue.length + ': enviando 0% — ' + file.name,
-        ''
-      );
 
-      uploadApi('/api/media/upload', form, function (percent) {
+      function sendFile(retryNumber) {
+        var form = new FormData();
+        form.append('file', file);
         setStatus(
           statusEl,
-          'Vídeo ' + position + ' de ' + queue.length + ': ' +
-            (percent < 100
-              ? 'enviando ' + percent + '%'
-              : 'otimizando para a televisão') +
-            ' — ' + file.name,
+          'Vídeo ' + position + ' de ' + queue.length + ': enviando 0% — ' + file.name +
+            (retryNumber ? ' (nova tentativa)' : ''),
           ''
         );
-      })
-        .then(function (data) { published.push(data.name); })
-        .catch(function (err) { failed.push(file.name + ' (' + err.message + ')'); })
-        .then(function () {
-          currentIndex += 1;
-          uploadNext();
-        });
+
+        uploadApi('/api/media/upload', form, function (percent) {
+          setStatus(
+            statusEl,
+            'Vídeo ' + position + ' de ' + queue.length + ': ' +
+              (percent < 100
+                ? 'enviando ' + percent + '%'
+                : 'otimizando para a televisão') +
+              ' — ' + file.name,
+            ''
+          );
+        })
+          .then(function (data) {
+            published.push(data.name);
+            currentIndex += 1;
+            uploadNext();
+          })
+          .catch(function (err) {
+            if (err.code !== 'NETWORK_ERROR') {
+              failed.push(file.name + ' (' + err.message + ')');
+              currentIndex += 1;
+              uploadNext();
+              return;
+            }
+
+            setStatus(
+              statusEl,
+              'A conexão caiu durante ' + file.name +
+                '. Aguardando o backend reiniciar...',
+              'err'
+            );
+            waitForBackend(0)
+              .then(function () {
+                if (retryNumber === 0) {
+                  sendFile(1);
+                } else {
+                  failed.push(file.name + ' (' + err.message + ')');
+                  currentIndex += 1;
+                  uploadNext();
+                }
+              })
+              .catch(function () { pauseQueue(file, err); });
+          });
+      }
+
+      sendFile(0);
     }
 
     uploadNext();
