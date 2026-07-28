@@ -71,7 +71,7 @@
   button.small { padding: 6px 10px; font-size: 12px; }
   button.link { background: none; border: none; color: var(--accent); padding: 0; font-weight: 400; text-decoration: underline; }
 
-  #status-line, #media-status, #config-status {
+  #status-line, #media-status, #config-status, #generate-status, #music-status {
     font-family: Consolas, Menlo, monospace; font-size: 12px; color: var(--text-dim);
     margin-top: 10px; min-height: 16px; display: block;
   }
@@ -304,14 +304,17 @@
   <p class="footer-note">Publicado via <a href="https://brenoq-a.github.io/reprodutor_video/" target="_blank">GitHub Pages</a></p>
 </div>
 
+<script src="admin-config.js"></script>
 <script>
 (function () {
-  // Endereço do backend (troque pelo seu domínio depois de publicar no Render/Fly.io).
-  var BACKEND_URL = 'https://player-backend-9jd2.onrender.com';
+  var BACKEND_URL = (window.ADMIN_CONFIG && window.ADMIN_CONFIG.backendUrl) ||
+    'http://localhost:3000';
+  BACKEND_URL = BACKEND_URL.replace(/\/+$/, '');
 
   var mode = 'login'; // 'login' | 'register'
   var media = [];
   var dragSrcIndex = null;
+  var authToken = sessionStorage.getItem('playerAuthToken') || '';
 
   var DEFAULT_CONFIG = {
     imageDurationSeconds: 15,
@@ -331,15 +334,73 @@
   function $(id) { return document.getElementById(id); }
   function setStatus(el, msg, kind) { el.textContent = msg; el.className = kind || ''; }
 
+  function authHeaders(headers) {
+    var result = headers || {};
+    if (authToken) { result.Authorization = 'Bearer ' + authToken; }
+    return result;
+  }
+
+  function parseResponse(res) {
+    return res.text().then(function (text) {
+      var data = {};
+      try { data = text ? JSON.parse(text) : {}; }
+      catch (e) {
+        data = { error: 'O servidor retornou uma resposta inválida (HTTP ' + res.status + ').' };
+      }
+      if (!res.ok) {
+        var error = new Error(data.error || ('HTTP ' + res.status));
+        error.code = data.code;
+        throw error;
+      }
+      return data;
+    });
+  }
+
   function api(path, options) {
     options = options || {};
     options.credentials = 'include';
+    options.headers = authHeaders(options.headers);
     return fetch(BACKEND_URL + path, options).then(function (res) {
-      if (res.status === 401) { showLogin('Sessão expirada. Entre novamente.'); }
-      return res.json().then(function (data) {
-        if (!res.ok) { throw new Error(data.error || ('HTTP ' + res.status)); }
-        return data;
-      });
+      if (res.status === 401) {
+        authToken = '';
+        sessionStorage.removeItem('playerAuthToken');
+        showLogin('Sessão expirada. Entre novamente.');
+      }
+      return parseResponse(res);
+    });
+  }
+
+  function uploadApi(path, form, onProgress) {
+    return new Promise(function (resolve, reject) {
+      var xhr = new XMLHttpRequest();
+      xhr.open('POST', BACKEND_URL + path, true);
+      xhr.withCredentials = true;
+      if (authToken) { xhr.setRequestHeader('Authorization', 'Bearer ' + authToken); }
+      xhr.upload.onprogress = function (event) {
+        if (event.lengthComputable && onProgress) {
+          onProgress(Math.round((event.loaded / event.total) * 100));
+        }
+      };
+      xhr.onload = function () {
+        var data = {};
+        try { data = xhr.responseText ? JSON.parse(xhr.responseText) : {}; }
+        catch (e) {
+          reject(new Error('O servidor retornou uma resposta inválida (HTTP ' + xhr.status + ').'));
+          return;
+        }
+        if (xhr.status < 200 || xhr.status >= 300) {
+          reject(new Error(data.error || ('HTTP ' + xhr.status)));
+          return;
+        }
+        resolve(data);
+      };
+      xhr.onerror = function () {
+        reject(new Error('A conexão com o servidor foi interrompida.'));
+      };
+      xhr.ontimeout = function () {
+        reject(new Error('O processamento demorou além do limite da conexão.'));
+      };
+      xhr.send(form);
     });
   }
 
@@ -370,10 +431,11 @@
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body)
     })
-      .then(function (res) { return res.json().then(function (data) { return { ok: res.ok, data: data }; }); })
-      .then(function (r) {
-        if (!r.ok) { setStatus(statusEl, r.data.error || 'Falha.', 'err'); return; }
-        onLoggedIn(r.data.gpid);
+      .then(parseResponse)
+      .then(function (data) {
+        authToken = data.token || '';
+        if (authToken) { sessionStorage.setItem('playerAuthToken', authToken); }
+        onLoggedIn(data.gpid);
       })
       .catch(function (err) { setStatus(statusEl, 'Não foi possível falar com o servidor: ' + err.message, 'err'); });
   });
@@ -391,7 +453,9 @@
     $('who').style.display = 'inline';
     $('who').innerHTML = gpid + ' <button class="ghost small" id="btn-logout" type="button">Sair</button>';
     $('btn-logout').addEventListener('click', function () {
-      fetch(BACKEND_URL + '/api/auth/logout', { method: 'POST', credentials: 'include' }).then(function () {
+      api('/api/auth/logout', { method: 'POST' }).catch(function () {}).then(function () {
+        authToken = '';
+        sessionStorage.removeItem('playerAuthToken');
         window.location.reload();
       });
     });
@@ -401,7 +465,10 @@
   }
 
   // tenta restaurar sessão salva
-  fetch(BACKEND_URL + '/api/auth/session', { credentials: 'include' })
+  fetch(BACKEND_URL + '/api/auth/session', {
+    credentials: 'include',
+    headers: authHeaders({})
+  })
     .then(function (res) { return res.ok ? res.json() : null; })
     .then(function (data) { if (data) { onLoggedIn(data.gpid); } })
     .catch(function () { /* backend fora do ar ou primeira visita - fica na tela de login */ });
@@ -494,7 +561,7 @@
     api('/api/media/reorder', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ order: media.map(function (m) { return m.name; }) })
+      body: JSON.stringify({ order: media.map(function (m) { return m.id; }) })
     })
       .then(function () { setStatus(statusEl, 'Ordem salva.', 'ok'); loadMedia(); })
       .catch(function (err) { setStatus(statusEl, err.message, 'err'); loadMedia(); });
@@ -504,7 +571,7 @@
     if (!confirm('Excluir "' + displayName(item.name) + '" da TV?')) { return; }
     var statusEl = $('media-status');
     setStatus(statusEl, 'Excluindo...', '');
-    api('/api/media/' + encodeURIComponent(item.name), { method: 'DELETE' })
+    api('/api/media/' + encodeURIComponent(item.id), { method: 'DELETE' })
       .then(function () { setStatus(statusEl, 'Excluído.', 'ok'); loadMedia(); })
       .catch(function (err) { setStatus(statusEl, err.message, 'err'); });
   }
@@ -535,7 +602,8 @@
     pickedFile = file || null;
     var label = $('picked-file-name');
     if (pickedFile) {
-      label.textContent = 'Selecionado: ' + pickedFile.name;
+      label.textContent = 'Selecionado: ' + pickedFile.name + ' (' +
+        (pickedFile.size / 1024 / 1024).toFixed(1) + ' MB)';
       label.style.display = 'block';
     } else {
       label.style.display = 'none';
@@ -565,12 +633,16 @@
     if (isDetailedMode()) {
       path = '/api/process/detailed';
       form.append('durationSeconds', $('gen-duration').value);
-      form.append('musicName', $('gen-music').value);
+      form.append('musicId', $('gen-music').value);
       form.append('keepOriginalAudio', $('gen-keep-audio').checked ? 'true' : 'false');
     }
     $('btn-generate').disabled = true;
-    setStatus(statusEl, 'Processando (pode levar até 1 minuto)...', '');
-    api(path, { method: 'POST', body: form })
+    setStatus(statusEl, 'Enviando 0%...', '');
+    uploadApi(path, form, function (percent) {
+      setStatus(statusEl, percent < 100
+        ? 'Enviando ' + percent + '%...'
+        : 'Upload concluído. Convertendo para o formato da TV...', '');
+    })
       .then(function (data) {
         setStatus(statusEl, 'Gerado e inserido: ' + data.name, 'ok');
         setPickedFile(null);
@@ -612,7 +684,7 @@
       list.appendChild(li);
 
       var opt = document.createElement('option');
-      opt.value = track.name;
+      opt.value = track.id;
       opt.textContent = track.name;
       select.appendChild(opt);
     });
@@ -621,7 +693,7 @@
   function deleteMusic(track) {
     if (!confirm('Excluir "' + track.name + '" da biblioteca?')) { return; }
     var statusEl = $('music-status');
-    api('/api/music/' + encodeURIComponent(track.name), { method: 'DELETE' })
+    api('/api/music/' + encodeURIComponent(track.id), { method: 'DELETE' })
       .then(function () { setStatus(statusEl, 'Excluída.', 'ok'); loadMusic(); })
       .catch(function (err) { setStatus(statusEl, err.message, 'err'); });
   }
