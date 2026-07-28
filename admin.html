@@ -187,11 +187,11 @@
       </p>
 
       <div class="upload-drop" id="video-upload-drop">
-        Arraste um vídeo aqui ou <button class="ghost small" id="btn-pick-video" type="button">escolher vídeo</button>
-        <input type="file" id="video-file-input" accept="video/*,.mp4,.mov,.mkv,.avi,.webm,.mpeg,.mpg">
+        Arraste um ou mais vídeos aqui ou <button class="ghost small" id="btn-pick-video" type="button">escolher vídeos</button>
+        <input type="file" id="video-file-input" accept="video/*,.mp4,.mov,.mkv,.avi,.webm,.mpeg,.mpg" multiple>
       </div>
       <p id="picked-video-name" style="color: var(--text-dim); font-size: 13px; display:none;"></p>
-      <button class="primary" id="btn-upload-video" style="margin-top: 14px;" disabled>Enviar vídeo</button>
+      <button class="primary" id="btn-upload-video" style="margin-top: 14px;" disabled>Enviar vídeos</button>
       <span id="video-upload-status"></span>
     </section>
 
@@ -589,13 +589,13 @@
 
   // ---------- upload de vídeos prontos ----------
   var VIDEO_EXT = ['mp4', 'webm', 'ogg', 'mov', 'mkv', 'avi', 'mpeg', 'mpg'];
-  var pickedVideo = null;
+  var pickedVideos = [];
   var videoDropZone = $('video-upload-drop');
   var videoFileInput = $('video-file-input');
 
   $('btn-pick-video').addEventListener('click', function () { videoFileInput.click(); });
   videoFileInput.addEventListener('change', function () {
-    setPickedVideo(videoFileInput.files[0]);
+    setPickedVideos(videoFileInput.files);
   });
   videoDropZone.addEventListener('dragover', function (e) {
     e.preventDefault();
@@ -607,7 +607,7 @@
   videoDropZone.addEventListener('drop', function (e) {
     e.preventDefault();
     videoDropZone.classList.remove('drag-over');
-    setPickedVideo(e.dataTransfer.files[0]);
+    setPickedVideos(e.dataTransfer.files);
   });
 
   function extOf(name) {
@@ -615,47 +615,100 @@
     return parts.length < 2 ? '' : parts[parts.length - 1].toLowerCase();
   }
 
-  function setPickedVideo(file) {
+  function setPickedVideos(files) {
     var statusEl = $('video-upload-status');
-    if (file && VIDEO_EXT.indexOf(extOf(file.name)) === -1) {
-      pickedVideo = null;
-      setStatus(statusEl, 'Selecione um arquivo de vídeo compatível.', 'err');
+    var selected = Array.prototype.slice.call(files || []);
+    var invalid = selected.filter(function (file) {
+      return VIDEO_EXT.indexOf(extOf(file.name)) === -1;
+    });
+
+    if (invalid.length) {
+      pickedVideos = [];
+      setStatus(
+        statusEl,
+        'Formato não suportado: ' + invalid.map(function (file) { return file.name; }).join(', '),
+        'err'
+      );
     } else {
-      pickedVideo = file || null;
+      pickedVideos = selected;
       setStatus(statusEl, '', '');
     }
 
     var label = $('picked-video-name');
-    if (pickedVideo) {
-      label.textContent = 'Selecionado: ' + pickedVideo.name + ' (' +
-        (pickedVideo.size / 1024 / 1024).toFixed(1) + ' MB)';
+    if (pickedVideos.length) {
+      var totalBytes = pickedVideos.reduce(function (sum, file) {
+        return sum + file.size;
+      }, 0);
+      label.textContent = pickedVideos.length + ' vídeo(s) selecionado(s) (' +
+        (totalBytes / 1024 / 1024).toFixed(1) + ' MB): ' +
+        pickedVideos.map(function (file) { return file.name; }).join(', ');
       label.style.display = 'block';
     } else {
       label.style.display = 'none';
     }
-    $('btn-upload-video').disabled = !pickedVideo;
+    $('btn-upload-video').textContent = pickedVideos.length
+      ? 'Enviar ' + pickedVideos.length + ' vídeo(s)'
+      : 'Enviar vídeos';
+    $('btn-upload-video').disabled = pickedVideos.length === 0;
   }
 
   $('btn-upload-video').addEventListener('click', function () {
-    if (!pickedVideo) { return; }
+    if (!pickedVideos.length) { return; }
     var statusEl = $('video-upload-status');
-    var form = new FormData();
-    form.append('file', pickedVideo);
+    var queue = pickedVideos.slice();
+    var published = [];
+    var failed = [];
+    var currentIndex = 0;
     $('btn-upload-video').disabled = true;
-    setStatus(statusEl, 'Enviando 0%...', '');
-    uploadApi('/api/media/upload', form, function (percent) {
-      setStatus(statusEl, percent < 100
-        ? 'Enviando ' + percent + '%...'
-        : 'Upload concluído. Otimizando para a televisão...', '');
-    })
-      .then(function (data) {
-        setStatus(statusEl, 'Vídeo publicado: ' + data.name, 'ok');
-        setPickedVideo(null);
+
+    function uploadNext() {
+      if (currentIndex >= queue.length) {
         videoFileInput.value = '';
+        setPickedVideos([]);
         loadMedia();
+        if (failed.length) {
+          setStatus(
+            statusEl,
+            published.length + ' vídeo(s) publicado(s) e ' + failed.length +
+              ' com falha: ' + failed.join('; '),
+            'err'
+          );
+        } else {
+          setStatus(statusEl, published.length + ' vídeo(s) publicado(s) com sucesso.', 'ok');
+        }
+        return;
+      }
+
+      var file = queue[currentIndex];
+      var position = currentIndex + 1;
+      var form = new FormData();
+      form.append('file', file);
+      setStatus(
+        statusEl,
+        'Vídeo ' + position + ' de ' + queue.length + ': enviando 0% — ' + file.name,
+        ''
+      );
+
+      uploadApi('/api/media/upload', form, function (percent) {
+        setStatus(
+          statusEl,
+          'Vídeo ' + position + ' de ' + queue.length + ': ' +
+            (percent < 100
+              ? 'enviando ' + percent + '%'
+              : 'otimizando para a televisão') +
+            ' — ' + file.name,
+          ''
+        );
       })
-      .catch(function (err) { setStatus(statusEl, err.message, 'err'); })
-      .finally(function () { $('btn-upload-video').disabled = !pickedVideo; });
+        .then(function (data) { published.push(data.name); })
+        .catch(function (err) { failed.push(file.name + ' (' + err.message + ')'); })
+        .then(function () {
+          currentIndex += 1;
+          uploadNext();
+        });
+    }
+
+    uploadNext();
   });
 
   // ---------- conversor de imagem para vídeo ----------
