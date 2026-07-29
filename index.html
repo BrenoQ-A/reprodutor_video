@@ -130,6 +130,7 @@
   var refreshTimer = null;
   var playlistRevision = '';
   var reloadAfterCurrent = false;
+  var pendingPlaylist = null;
   var currentAudio = null;
   var musicIndex = 0;
   var failuresInCycle = 0;
@@ -322,7 +323,7 @@
 
   function mediaFailed(item, detail) {
     if (reloadAfterCurrent) {
-      reloadPlayer();
+      activatePendingPlaylist();
       return;
     }
     failuresInCycle += 1;
@@ -399,15 +400,60 @@
     }
   }
 
-  function reloadPlayer() {
-    clearPlayback();
-    window.location.reload();
+  function queuePlaylistUpdate(updated, updatedRevision) {
+    pendingPlaylist = updated;
+    playlistRevision = updatedRevision;
+    reloadAfterCurrent = true;
+    updateHud();
+  }
+
+  function activatePendingPlaylist() {
+    var previousIndex = index;
+    var currentIndex = -1;
+    var i;
+
+    if (!reloadAfterCurrent || pendingPlaylist === null) {
+      advance();
+      return;
+    }
+
+    playlist = pendingPlaylist;
+    pendingPlaylist = null;
+    reloadAfterCurrent = false;
+
+    for (i = 0; i < playlist.length; i++) {
+      if (playlist[i].id === currentId) {
+        currentIndex = i;
+        break;
+      }
+    }
+
+    if (currentIndex >= 0) {
+      index = currentIndex;
+    } else {
+      index = Math.max(-1, Math.min(previousIndex - 1, playlist.length - 1));
+    }
+
+    updateHud();
+    if (!playlist.length) {
+      clearPlayback();
+      currentId = null;
+      index = -1;
+      showMessage('Nenhuma mídia publicada', 'Envie um vídeo pelo painel administrativo.');
+      schedulePlaylistRefresh();
+      return;
+    }
+
+    hideMessage();
+    failuresInCycle = 0;
+    advance();
+    schedulePlaylistRefresh();
   }
 
   function finishCurrent() {
     failuresInCycle = 0;
     if (reloadAfterCurrent) {
-      reloadPlayer();
+      activatePendingPlaylist();
       return;
     }
 
@@ -424,9 +470,8 @@
       var updated = normalizePlaylist(data);
       var updatedRevision = revisionOf(data, updated);
       if (updatedRevision !== playlistRevision) {
-        playlistRevision = updatedRevision;
-        reloadAfterCurrent = true;
-        reloadPlayer();
+        queuePlaylistUpdate(updated, updatedRevision);
+        activatePendingPlaylist();
         return;
       }
       playlistRevision = updatedRevision;
@@ -584,12 +629,18 @@
       var i;
 
       if (playlistRevision && updatedRevision !== playlistRevision) {
-        playlistRevision = updatedRevision;
-        reloadAfterCurrent = true;
-        updateHud();
+        queuePlaylistUpdate(updated, updatedRevision);
         if (!currentId || stageInner.innerHTML === '') {
-          reloadPlayer();
+          activatePendingPlaylist();
+          return;
         }
+        schedulePlaylistRefresh();
+        return;
+      }
+
+      if (reloadAfterCurrent) {
+        pendingPlaylist = updated;
+        schedulePlaylistRefresh();
         return;
       }
 
