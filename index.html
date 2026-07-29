@@ -101,7 +101,8 @@
   var BOOTSTRAP = {
     playlistUrl: '',
     configUrl: '',
-    bootstrapRefreshMinutes: 30
+    bootstrapRefreshMinutes: 30,
+    playlistCheckSeconds: 5
   };
 
   var CONFIG = {
@@ -127,6 +128,8 @@
   var videoSafetyTimer = null;
   var progressTimer = null;
   var refreshTimer = null;
+  var playlistRevision = '';
+  var reloadAfterCurrent = false;
   var currentAudio = null;
   var musicIndex = 0;
   var failuresInCycle = 0;
@@ -212,6 +215,7 @@
   function updateHud() {
     var now;
     var position;
+    var updateNotice;
     if (!CONFIG.showHud) {
       hud.style.display = 'none';
       return;
@@ -219,7 +223,9 @@
     hud.style.display = 'block';
     now = new Date();
     position = playlist.length && index >= 0 ? (index + 1) + '/' + playlist.length : '';
-    hud.innerHTML = position + '  ' + pad2(now.getHours()) + ':' + pad2(now.getMinutes());
+    updateNotice = reloadAfterCurrent ? '  ↻ NOVO CONTEÚDO' : '';
+    hud.innerHTML =
+      position + updateNotice + '  ' + pad2(now.getHours()) + ':' + pad2(now.getMinutes());
   }
 
   function fitToScreen(element, naturalWidth, naturalHeight) {
@@ -315,6 +321,10 @@
   }
 
   function mediaFailed(item, detail) {
+    if (reloadAfterCurrent) {
+      reloadPlayer();
+      return;
+    }
     failuresInCycle += 1;
     if (failuresInCycle >= playlist.length) {
       clearPlayback();
@@ -389,6 +399,47 @@
     }
   }
 
+  function reloadPlayer() {
+    clearPlayback();
+    window.location.reload();
+  }
+
+  function finishCurrent() {
+    failuresInCycle = 0;
+    if (reloadAfterCurrent) {
+      reloadPlayer();
+      return;
+    }
+
+    if (!BOOTSTRAP.playlistUrl || !playlistRevision) {
+      advance();
+      return;
+    }
+
+    if (refreshTimer) {
+      clearTimeout(refreshTimer);
+      refreshTimer = null;
+    }
+    requestJson(BOOTSTRAP.playlistUrl, function (data) {
+      var updated = normalizePlaylist(data);
+      var updatedRevision = revisionOf(data, updated);
+      if (updatedRevision !== playlistRevision) {
+        playlistRevision = updatedRevision;
+        reloadAfterCurrent = true;
+        reloadPlayer();
+        return;
+      }
+      playlistRevision = updatedRevision;
+      advance();
+      schedulePlaylistRefresh();
+    }, function () {
+      advance();
+      schedulePlaylistRefresh(
+        Math.max(1, Number(CONFIG.pollIntervalMinutes) || 5) * 60 * 1000
+      );
+    });
+  }
+
   function renderCurrent() {
     var item = playlist[index];
     var element;
@@ -423,7 +474,7 @@
         duration = CONFIG.imageMusicDurationSeconds;
       }
       startTimedProgress(duration);
-      advanceTimer = setTimeout(advance, duration * 1000);
+      advanceTimer = setTimeout(finishCurrent, duration * 1000);
       return;
     }
 
@@ -455,8 +506,7 @@
       }
     };
     element.onended = function () {
-      failuresInCycle = 0;
-      advance();
+      finishCurrent();
     };
     element.onerror = function () {
       var code = element.error ? element.error.code : 'desconhecido';
@@ -512,6 +562,13 @@
     return result;
   }
 
+  function revisionOf(data, normalized) {
+    if (data && data.updatedAt) { return String(data.updatedAt); }
+    return normalized.map(function (item) {
+      return String(item.id || item.name) + '|' + String(item.url);
+    }).join('||');
+  }
+
   function refreshPlaylist() {
     if (!BOOTSTRAP.playlistUrl) {
       showMessage(
@@ -523,7 +580,20 @@
 
     requestJson(BOOTSTRAP.playlistUrl, function (data) {
       var updated = normalizePlaylist(data);
+      var updatedRevision = revisionOf(data, updated);
       var i;
+
+      if (playlistRevision && updatedRevision !== playlistRevision) {
+        playlistRevision = updatedRevision;
+        reloadAfterCurrent = true;
+        updateHud();
+        if (!currentId || stageInner.innerHTML === '') {
+          reloadPlayer();
+        }
+        return;
+      }
+
+      playlistRevision = updatedRevision;
       playlist = updated;
 
       if (!playlist.length) {
@@ -554,15 +624,17 @@
       if (!playlist.length) {
         showMessage('Falha ao carregar playlist', error);
       }
-      schedulePlaylistRefresh();
+      schedulePlaylistRefresh(
+        Math.max(1, Number(CONFIG.pollIntervalMinutes) || 5) * 60 * 1000
+      );
     });
   }
 
-  function schedulePlaylistRefresh() {
+  function schedulePlaylistRefresh(delayMs) {
     if (refreshTimer) { clearTimeout(refreshTimer); }
     refreshTimer = setTimeout(
       refreshPlaylist,
-      Math.max(1, Number(CONFIG.pollIntervalMinutes) || 5) * 60 * 1000
+      delayMs || Math.max(2, Number(BOOTSTRAP.playlistCheckSeconds) || 5) * 1000
     );
   }
 
