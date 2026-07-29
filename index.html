@@ -107,7 +107,6 @@
   var CONFIG = {
     imageDurationSeconds: 15,
     pollIntervalMinutes: 5,
-    startMuted: false,
     showHud: true,
     autoReloadHours: 6,
     targetVolume: 0.8,
@@ -132,6 +131,7 @@
   var musicIndex = 0;
   var failuresInCycle = 0;
   var startedAt = new Date().getTime();
+  var pendingAudioStart = null;
 
   var stageOuter = document.getElementById('stage-outer');
   var stageInner = document.getElementById('stage-inner');
@@ -289,6 +289,9 @@
   }
 
   function clearPlayback() {
+    pendingAudioStart = null;
+    document.removeEventListener('click', resumePlaybackWithAudio, false);
+    document.removeEventListener('keydown', resumePlaybackWithAudio, false);
     if (advanceTimer) { clearTimeout(advanceTimer); advanceTimer = null; }
     if (videoSafetyTimer) { clearTimeout(videoSafetyTimer); videoSafetyTimer = null; }
     if (progressTimer) { clearInterval(progressTimer); progressTimer = null; }
@@ -326,61 +329,63 @@
     advance();
   }
 
-  function playVideoWithFallback(element, item) {
+  function requestAudioStart(element, item) {
+    pendingAudioStart = { element: element, item: item };
+    showMessage(
+      'Áudio aguardando autorização',
+      'O navegador bloqueou o início automático com som.<br>' +
+      'Pressione <code>OK/Enter</code> ou clique na tela para começar com o áudio ligado.'
+    );
+    document.addEventListener('click', resumePlaybackWithAudio, false);
+    document.addEventListener('keydown', resumePlaybackWithAudio, false);
+  }
+
+  function resumePlaybackWithAudio(event) {
+    var code;
+    var pending;
     var playResult;
 
-    function mutedFallback() {
-      var retryResult;
-      element.muted = true;
-      element.setAttribute('muted', 'muted');
-      try {
-        retryResult = element.play();
-        if (retryResult && typeof retryResult.catch === 'function') {
-          retryResult.catch(function () {
-            mediaFailed(item, 'O navegador bloqueou a reprodução automática.');
-          });
-        }
-      } catch (error) {
-        mediaFailed(item, 'O navegador bloqueou a reprodução automática.');
-      }
+    if (!pendingAudioStart) { return; }
+    if (event && event.type === 'keydown') {
+      code = event.keyCode || event.which;
+      if (code !== 13 && code !== 32) { return; }
     }
 
+    pending = pendingAudioStart;
+    pendingAudioStart = null;
+    document.removeEventListener('click', resumePlaybackWithAudio, false);
+    document.removeEventListener('keydown', resumePlaybackWithAudio, false);
+    pending.element.muted = false;
+    pending.element.removeAttribute('muted');
+
     try {
-      playResult = element.play();
+      playResult = pending.element.play();
       if (playResult && typeof playResult.catch === 'function') {
-        playResult.catch(function () {
-          if (!element.muted) {
-            mutedFallback();
-          } else {
-            mediaFailed(item, 'O navegador bloqueou a reprodução automática.');
-          }
+        playResult.then(hideMessage).catch(function () {
+          mediaFailed(pending.item, 'O navegador não autorizou a reprodução com áudio.');
         });
+      } else {
+        hideMessage();
       }
     } catch (error) {
-      if (!element.muted) {
-        mutedFallback();
-      } else {
-        mediaFailed(item, 'O navegador bloqueou a reprodução automática.');
-      }
+      mediaFailed(pending.item, 'O navegador não autorizou a reprodução com áudio.');
     }
   }
 
-  function restoreVideoAudio(element) {
+  function playVideoWithAudio(element, item) {
     var playResult;
-    if (CONFIG.startMuted || !element.muted) { return; }
     element.muted = false;
     element.removeAttribute('muted');
+
     try {
       playResult = element.play();
       if (playResult && typeof playResult.catch === 'function') {
         playResult.catch(function () {
-          element.muted = true;
-          element.setAttribute('muted', 'muted');
+          requestAudioStart(element, item);
         });
       }
     } catch (error) {
-      element.muted = true;
-      element.setAttribute('muted', 'muted');
+      requestAudioStart(element, item);
     }
   }
 
@@ -425,19 +430,12 @@
     element = document.createElement('video');
     element.crossOrigin = 'anonymous';
     element.autoplay = true;
-    element.muted = !!CONFIG.startMuted;
+    element.muted = false;
     override = CONFIG.videoVolumeOverrides && CONFIG.videoVolumeOverrides[item.name];
     element.volume = override !== undefined ? Number(override) : Number(CONFIG.targetVolume);
     element.setAttribute('playsinline', 'true');
     element.setAttribute('preload', 'auto');
     element.setAttribute('tabindex', '0');
-    element.onclick = function () { restoreVideoAudio(element); };
-    element.onkeydown = function (event) {
-      var code = event && (event.keyCode || event.which);
-      if (code === 13 || code === 32) {
-        restoreVideoAudio(element);
-      }
-    };
 
     element.onloadedmetadata = function () {
       fitToScreen(element, element.videoWidth, element.videoHeight);
@@ -468,7 +466,7 @@
     stageInner.appendChild(element);
     element.src = item.url;
     try { element.load(); } catch (error) {}
-    playVideoWithFallback(element, item);
+    playVideoWithAudio(element, item);
 
     videoSafetyTimer = setTimeout(function () {
       mediaFailed(item, 'A TV não iniciou o vídeo.');
