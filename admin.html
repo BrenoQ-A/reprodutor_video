@@ -132,6 +132,19 @@
   #music-status:empty, #video-upload-status:empty { display: none; }
   .ok { color: var(--ok) !important; background: var(--ok-soft) !important; border-color: rgba(114,212,155,.2) !important; }
   .err { color: var(--danger) !important; background: var(--danger-soft) !important; border-color: rgba(255,107,93,.2) !important; }
+  .processing-results { list-style: none; margin: 12px 0 0; padding: 0; }
+  .processing-results:empty { display: none; }
+  .processing-results li {
+    display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;
+    padding: 9px 10px; border-bottom: 1px solid var(--line-soft);
+    color: var(--text-dim); font-size: 12px; line-height: 1.4;
+  }
+  .processing-results li:last-child { border-bottom: 0; }
+  .processing-results .result-name { min-width: 0; overflow-wrap: anywhere; }
+  .processing-results .result-method {
+    flex-shrink: 0; color: var(--ok); text-align: right; font-weight: 650;
+  }
+  .processing-results .result-method.failed { color: var(--danger); }
 
   ul#media-list { list-style: none; margin: 0 0 14px; padding: 0; }
   ul#media-list li {
@@ -300,6 +313,7 @@
       <p id="picked-video-name" class="picked-file"></p>
       <button class="primary" id="btn-upload-video" style="margin-top: 14px;" disabled>Enviar vídeos</button>
       <span id="video-upload-status" role="status" aria-live="polite"></span>
+      <ul id="video-upload-results" class="processing-results" aria-label="Resultado do processamento por arquivo"></ul>
     </section>
 
     <section class="card">
@@ -824,7 +838,53 @@
     var published = [];
     var failed = [];
     var currentIndex = 0;
+    $('video-upload-results').textContent = '';
     $('btn-upload-video').disabled = true;
+
+    function processingLabel(processing) {
+      var labels = {
+        direct: 'Publicado diretamente, sem conversão',
+        remuxed: 'MP4 reorganizado, sem recodificar',
+        'audio-transcoded': 'Vídeo preservado; somente o áudio foi convertido',
+        transcoded: 'Vídeo recodificado para o perfil da TV'
+      };
+      return labels[processing] || 'Processamento não informado pelo servidor';
+    }
+
+    function appendProcessingResult(fileName, processing, failedMessage) {
+      var list = $('video-upload-results');
+      var item = document.createElement('li');
+      var name = document.createElement('span');
+      var method = document.createElement('span');
+      name.className = 'result-name';
+      name.textContent = fileName;
+      method.className = 'result-method' + (failedMessage ? ' failed' : '');
+      method.textContent = failedMessage || processingLabel(processing);
+      item.appendChild(name);
+      item.appendChild(method);
+      list.appendChild(item);
+    }
+
+    function processingSummary() {
+      var counts = {};
+      var order = ['direct', 'remuxed', 'audio-transcoded', 'transcoded', 'unknown'];
+      var labels = {
+        direct: 'sem conversão',
+        remuxed: 'MP4 reorganizado sem recodificação',
+        'audio-transcoded': 'somente com o áudio convertido',
+        transcoded: 'com recodificação completa',
+        unknown: 'sem informação de processamento'
+      };
+      published.forEach(function (item) {
+        var key = labels[item.processing] ? item.processing : 'unknown';
+        counts[key] = (counts[key] || 0) + 1;
+      });
+      return order.filter(function (key) {
+        return counts[key];
+      }).map(function (key) {
+        return counts[key] + ' ' + labels[key];
+      }).join('; ');
+    }
 
     function shortFailureSummary() {
       var visible = failed.slice(0, 3).join('; ');
@@ -842,11 +902,18 @@
         setStatus(
           statusEl,
           published.length + ' vídeo(s) publicado(s) e ' + failed.length +
-            ' com falha: ' + shortFailureSummary(),
+            ' com falha. Processamento concluído: ' +
+            (processingSummary() || 'nenhum vídeo publicado') +
+            '. Falhas: ' + shortFailureSummary(),
           'err'
         );
       } else {
-        setStatus(statusEl, published.length + ' vídeo(s) publicado(s) com sucesso.', 'ok');
+        setStatus(
+          statusEl,
+          published.length + ' vídeo(s) publicado(s). Processamento concluído: ' +
+            processingSummary() + '.',
+          'ok'
+        );
       }
     }
 
@@ -855,6 +922,7 @@
       videoFileInput.value = '';
       setPickedVideos(remaining);
       loadMedia();
+      appendProcessingResult(file.name, '', 'Falha: ' + error.message);
       setStatus(
         statusEl,
         'O backend não voltou em 1 minuto. ' + file.name + ' falhou (' +
@@ -889,19 +957,28 @@
             'Vídeo ' + position + ' de ' + queue.length + ': ' +
               (percent < 100
                 ? 'enviando ' + percent + '%'
-                : 'otimizando para a televisão') +
+                : 'upload concluído; verificando compatibilidade') +
               ' — ' + file.name,
             ''
           );
         })
           .then(function (data) {
-            published.push(data.name);
+            published.push({
+              name: data.name || file.name,
+              processing: data.processing || 'unknown'
+            });
+            appendProcessingResult(
+              data.name || file.name,
+              data.processing || 'unknown',
+              ''
+            );
             currentIndex += 1;
             uploadNext();
           })
           .catch(function (err) {
             if (err.code !== 'NETWORK_ERROR') {
               failed.push(file.name + ' (' + err.message + ')');
+              appendProcessingResult(file.name, '', 'Falha: ' + err.message);
               currentIndex += 1;
               uploadNext();
               return;
@@ -919,6 +996,7 @@
                   sendFile(1);
                 } else {
                   failed.push(file.name + ' (' + err.message + ')');
+                  appendProcessingResult(file.name, '', 'Falha: ' + err.message);
                   currentIndex += 1;
                   uploadNext();
                 }
