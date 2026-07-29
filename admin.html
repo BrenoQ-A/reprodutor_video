@@ -132,6 +132,50 @@
   #music-status:empty, #video-upload-status:empty { display: none; }
   .ok { color: var(--ok) !important; background: var(--ok-soft) !important; border-color: rgba(114,212,155,.2) !important; }
   .err { color: var(--danger) !important; background: var(--danger-soft) !important; border-color: rgba(255,107,93,.2) !important; }
+  .processing-results { list-style: none; margin: 12px 0 0; padding: 0; }
+  .processing-results:empty { display: none; }
+  .processing-results li {
+    display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;
+    padding: 9px 10px; border-bottom: 1px solid var(--line-soft);
+    color: var(--text-dim); font-size: 12px; line-height: 1.4;
+  }
+  .processing-results li:last-child { border-bottom: 0; }
+  .processing-results .result-name { min-width: 0; overflow-wrap: anywhere; }
+  .processing-results .result-method {
+    flex-shrink: 0; color: var(--ok); text-align: right; font-weight: 650;
+  }
+  .processing-results .result-method.failed { color: var(--danger); }
+  .processing-progress {
+    display: none; margin-top: 12px; padding: 12px;
+    border: 1px solid var(--line-soft); border-radius: 10px;
+    background: rgba(255,255,255,.02);
+  }
+  .processing-progress.visible { display: block; }
+  .processing-progress-head {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    margin-bottom: 8px; font-size: 12px;
+  }
+  .processing-progress-stage { color: var(--text); font-weight: 650; }
+  .processing-progress-percent { color: var(--accent); font-family: Consolas, Menlo, monospace; }
+  .processing-progress-track {
+    height: 8px; overflow: hidden; border-radius: 999px;
+    background: var(--panel-3);
+  }
+  .processing-progress-fill {
+    width: 0; height: 100%; border-radius: inherit;
+    background: linear-gradient(90deg, var(--accent), var(--accent-strong));
+    transition: width .25s ease;
+  }
+  .processing-progress.indeterminate .processing-progress-fill {
+    width: 34%; animation: processing-pulse 1.1s ease-in-out infinite alternate;
+  }
+  .processing-progress-detail {
+    margin: 8px 0 0; color: var(--text-dim); font-size: 11px; line-height: 1.4;
+  }
+  @keyframes processing-pulse {
+    from { transform: translateX(-20%); }
+    to { transform: translateX(210%); }
+  }
 
   ul#media-list { list-style: none; margin: 0 0 14px; padding: 0; }
   ul#media-list li {
@@ -300,6 +344,24 @@
       <p id="picked-video-name" class="picked-file"></p>
       <button class="primary" id="btn-upload-video" style="margin-top: 14px;" disabled>Enviar vídeos</button>
       <span id="video-upload-status" role="status" aria-live="polite"></span>
+      <div
+        id="video-processing-progress"
+        class="processing-progress"
+        role="progressbar"
+        aria-label="Progresso da etapa atual"
+        aria-valuemin="0"
+        aria-valuemax="100"
+      >
+        <div class="processing-progress-head">
+          <span id="video-progress-stage" class="processing-progress-stage">Aguardando</span>
+          <strong id="video-progress-percent" class="processing-progress-percent">0%</strong>
+        </div>
+        <div class="processing-progress-track">
+          <div id="video-progress-fill" class="processing-progress-fill"></div>
+        </div>
+        <p id="video-progress-detail" class="processing-progress-detail"></p>
+      </div>
+      <ul id="video-upload-results" class="processing-results" aria-label="Resultado do processamento por arquivo"></ul>
     </section>
 
     <section class="card">
@@ -489,12 +551,14 @@
     });
   }
 
-  function uploadApi(path, form, onProgress) {
+  function uploadApi(path, form, onProgress, options) {
+    var opts = options || {};
     return new Promise(function (resolve, reject) {
       var xhr = new XMLHttpRequest();
       xhr.open('POST', BACKEND_URL + path, true);
       xhr.withCredentials = true;
       if (authToken) { xhr.setRequestHeader('Authorization', 'Bearer ' + authToken); }
+      if (opts.uploadId) { xhr.setRequestHeader('X-Upload-ID', opts.uploadId); }
       xhr.upload.onprogress = function (event) {
         if (event.lengthComputable && onProgress) {
           onProgress(Math.round((event.loaded / event.total) * 100));
@@ -824,7 +888,142 @@
     var published = [];
     var failed = [];
     var currentIndex = 0;
+    $('video-upload-results').textContent = '';
     $('btn-upload-video').disabled = true;
+
+    function createUploadId() {
+      if (window.crypto && typeof window.crypto.randomUUID === 'function') {
+        return window.crypto.randomUUID();
+      }
+      return 'upload-' + Date.now() + '-' + Math.random().toString(16).slice(2);
+    }
+
+    function showStageProgress(stage, percent, detail) {
+      var container = $('video-processing-progress');
+      var numeric = Number(percent);
+      var measurable = Number.isFinite(numeric);
+      var safePercent = measurable ? Math.min(100, Math.max(0, numeric)) : 0;
+      container.className = 'processing-progress visible' +
+        (measurable ? '' : ' indeterminate');
+      container.setAttribute('aria-valuenow', measurable ? String(Math.round(safePercent)) : '0');
+      container.setAttribute('aria-valuetext', measurable
+        ? stage + ': ' + Math.round(safePercent) + '%'
+        : stage + ': progresso ainda não mensurável');
+      $('video-progress-stage').textContent = stage;
+      $('video-progress-percent').textContent = measurable
+        ? Math.round(safePercent) + '%'
+        : 'em andamento';
+      $('video-progress-fill').style.width = measurable ? safePercent + '%' : '';
+      $('video-progress-detail').textContent = detail || 'Progresso da etapa atual.';
+    }
+
+    function stagePresentation(progress) {
+      var percent = Number(progress.percent);
+      var stages = {
+        checking: ['Etapa 2/4 — Verificando compatibilidade', null],
+        queued: ['Aguardando na fila de processamento', null],
+        remuxing: ['Etapa 3/4 — Reorganizando o MP4', percent],
+        'audio-transcoding': ['Etapa 3/4 — Convertendo somente o áudio', percent],
+        transcoding: ['Etapa 3/4 — Recodificando o vídeo', percent],
+        publishing: ['Etapa 4/4 — Publicando no R2', percent],
+        complete: ['Concluído', 100],
+        failed: ['Processamento interrompido', null]
+      };
+      return stages[progress.stage] || ['Processando no servidor', null];
+    }
+
+    function monitorServerProgress(uploadId, file, position, total) {
+      var stopped = false;
+      var timer = null;
+
+      function schedule() {
+        if (!stopped) { timer = setTimeout(poll, 750); }
+      }
+
+      function poll() {
+        fetch(BACKEND_URL + '/api/media/progress/' + encodeURIComponent(uploadId), {
+          credentials: 'include',
+          headers: authHeaders({})
+        })
+          .then(function (res) {
+            if (res.status === 404) { return null; }
+            return parseResponse(res);
+          })
+          .then(function (data) {
+            if (stopped || !data || !data.progress) {
+              schedule();
+              return;
+            }
+            var progress = data.progress;
+            var presentation = stagePresentation(progress);
+            var detail = progress.message || 'Processando ' + file.name + '.';
+            if (progress.stage === 'queued' && progress.queuePosition) {
+              detail += ' Posição atual: ' + progress.queuePosition + '.';
+            }
+            showStageProgress(presentation[0], presentation[1], detail);
+            setStatus(
+              statusEl,
+              'Vídeo ' + position + ' de ' + total + ': ' + detail + ' — ' + file.name,
+              progress.stage === 'failed' ? 'err' : ''
+            );
+            if (progress.stage !== 'complete' && progress.stage !== 'failed') {
+              schedule();
+            }
+          })
+          .catch(function () { schedule(); });
+      }
+
+      poll();
+      return function stop() {
+        stopped = true;
+        if (timer) { clearTimeout(timer); }
+      };
+    }
+
+    function processingLabel(processing) {
+      var labels = {
+        direct: 'Publicado diretamente, sem conversão',
+        remuxed: 'MP4 reorganizado, sem recodificar',
+        'audio-transcoded': 'Vídeo preservado; somente o áudio foi convertido',
+        transcoded: 'Vídeo recodificado para o perfil da TV'
+      };
+      return labels[processing] || 'Processamento não informado pelo servidor';
+    }
+
+    function appendProcessingResult(fileName, processing, failedMessage) {
+      var list = $('video-upload-results');
+      var item = document.createElement('li');
+      var name = document.createElement('span');
+      var method = document.createElement('span');
+      name.className = 'result-name';
+      name.textContent = fileName;
+      method.className = 'result-method' + (failedMessage ? ' failed' : '');
+      method.textContent = failedMessage || processingLabel(processing);
+      item.appendChild(name);
+      item.appendChild(method);
+      list.appendChild(item);
+    }
+
+    function processingSummary() {
+      var counts = {};
+      var order = ['direct', 'remuxed', 'audio-transcoded', 'transcoded', 'unknown'];
+      var labels = {
+        direct: 'sem conversão',
+        remuxed: 'MP4 reorganizado sem recodificação',
+        'audio-transcoded': 'somente com o áudio convertido',
+        transcoded: 'com recodificação completa',
+        unknown: 'sem informação de processamento'
+      };
+      published.forEach(function (item) {
+        var key = labels[item.processing] ? item.processing : 'unknown';
+        counts[key] = (counts[key] || 0) + 1;
+      });
+      return order.filter(function (key) {
+        return counts[key];
+      }).map(function (key) {
+        return counts[key] + ' ' + labels[key];
+      }).join('; ');
+    }
 
     function shortFailureSummary() {
       var visible = failed.slice(0, 3).join('; ');
@@ -842,11 +1041,18 @@
         setStatus(
           statusEl,
           published.length + ' vídeo(s) publicado(s) e ' + failed.length +
-            ' com falha: ' + shortFailureSummary(),
+            ' com falha. Processamento concluído: ' +
+            (processingSummary() || 'nenhum vídeo publicado') +
+            '. Falhas: ' + shortFailureSummary(),
           'err'
         );
       } else {
-        setStatus(statusEl, published.length + ' vídeo(s) publicado(s) com sucesso.', 'ok');
+        setStatus(
+          statusEl,
+          published.length + ' vídeo(s) publicado(s). Processamento concluído: ' +
+            processingSummary() + '.',
+          'ok'
+        );
       }
     }
 
@@ -855,6 +1061,7 @@
       videoFileInput.value = '';
       setPickedVideos(remaining);
       loadMedia();
+      appendProcessingResult(file.name, '', 'Falha: ' + error.message);
       setStatus(
         statusEl,
         'O backend não voltou em 1 minuto. ' + file.name + ' falhou (' +
@@ -875,7 +1082,19 @@
 
       function sendFile(retryNumber) {
         var form = new FormData();
+        var uploadId = createUploadId();
+        var stopProgressMonitor = monitorServerProgress(
+          uploadId,
+          file,
+          position,
+          queue.length
+        );
         form.append('file', file);
+        showStageProgress(
+          'Etapa 1/4 — Enviando ao servidor',
+          0,
+          'Transferindo ' + file.name + ' para o backend.'
+        );
         setStatus(
           statusEl,
           'Vídeo ' + position + ' de ' + queue.length + ': enviando 0% — ' + file.name +
@@ -884,24 +1103,50 @@
         );
 
         uploadApi('/api/media/upload', form, function (percent) {
+          showStageProgress(
+            'Etapa 1/4 — Enviando ao servidor',
+            percent,
+            percent < 100
+              ? 'Transferindo ' + file.name + ' para o backend.'
+              : 'Upload concluído. Aguardando a análise do servidor.'
+          );
           setStatus(
             statusEl,
             'Vídeo ' + position + ' de ' + queue.length + ': ' +
               (percent < 100
                 ? 'enviando ' + percent + '%'
-                : 'otimizando para a televisão') +
+                : 'upload concluído; verificando compatibilidade') +
               ' — ' + file.name,
             ''
           );
+        }, {
+          uploadId: uploadId
         })
           .then(function (data) {
-            published.push(data.name);
+            stopProgressMonitor();
+            showStageProgress(
+              'Concluído',
+              100,
+              processingLabel(data.processing || 'unknown') + '.'
+            );
+            published.push({
+              name: data.name || file.name,
+              processing: data.processing || 'unknown'
+            });
+            appendProcessingResult(
+              data.name || file.name,
+              data.processing || 'unknown',
+              ''
+            );
             currentIndex += 1;
             uploadNext();
           })
           .catch(function (err) {
+            stopProgressMonitor();
             if (err.code !== 'NETWORK_ERROR') {
+              showStageProgress('Processamento interrompido', null, err.message);
               failed.push(file.name + ' (' + err.message + ')');
+              appendProcessingResult(file.name, '', 'Falha: ' + err.message);
               currentIndex += 1;
               uploadNext();
               return;
@@ -913,12 +1158,18 @@
                 '. Aguardando o backend reiniciar...',
               'err'
             );
+            showStageProgress(
+              'Conexão interrompida',
+              null,
+              'Aguardando o backend voltar para decidir se o arquivo será reenviado.'
+            );
             waitForBackend(0)
               .then(function () {
                 if (retryNumber === 0) {
                   sendFile(1);
                 } else {
                   failed.push(file.name + ' (' + err.message + ')');
+                  appendProcessingResult(file.name, '', 'Falha: ' + err.message);
                   currentIndex += 1;
                   uploadNext();
                 }
