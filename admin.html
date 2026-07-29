@@ -225,7 +225,37 @@
     background: var(--panel-2); border: 1px solid var(--line-soft); border-radius: 10px;
     padding: 9px 10px; margin-bottom: 8px;
   }
-  ul#music-list li .name { flex: 1; font-size: 14px; word-break: break-all; }
+  ul#music-list li .name { flex: 1; min-width: 0; font-size: 14px; word-break: break-word; }
+  ul#music-list li .source-tag {
+    color: var(--accent); font: 10px Consolas, Menlo, monospace;
+    text-decoration: none; text-transform: uppercase;
+    border: 1px solid rgba(245,173,61,.28); border-radius: 999px; padding: 3px 7px;
+  }
+  ul#music-list li .source-tag:hover { border-color: var(--accent); }
+  .youtube-import {
+    margin: 16px 0; padding: 16px; border: 1px solid var(--line-soft);
+    border-radius: 12px; background: var(--panel-2);
+  }
+  .youtube-import h3 {
+    margin: 0 0 6px; color: var(--text); font-size: 14px;
+  }
+  .youtube-import p {
+    margin: 0 0 12px; color: var(--text-dim); font-size: 12px; line-height: 1.55;
+  }
+  .youtube-import-actions {
+    display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: end;
+  }
+  .youtube-import-actions input { margin: 0; }
+  .youtube-import .authorization {
+    display: flex; align-items: flex-start; gap: 8px; margin: 11px 0 0;
+    color: var(--text-dim); font-size: 12px; line-height: 1.45;
+  }
+  .youtube-import .authorization input {
+    width: auto; margin-top: 2px; flex-shrink: 0;
+  }
+  .music-file-upload {
+    display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-top: 14px;
+  }
 
   .upload-drop {
     border: 1px dashed #3a3f49; border-radius: 12px; padding: 28px 20px;
@@ -322,6 +352,10 @@
     ul#media-list li { flex-wrap: wrap; }
     ul#media-list li .name { flex-basis: calc(100% - 130px); }
     ul#media-list li .type-tag { margin-left: 102px; }
+    .youtube-import-actions { grid-template-columns: 1fr; }
+    .youtube-import-actions button { width: 100%; }
+    ul#music-list li { flex-wrap: wrap; }
+    ul#music-list li .name { flex-basis: 100%; }
     .vpn-modal { padding: 10px; }
     .vpn-modal-panel { max-height: calc(100vh - 20px); padding: 20px 16px; }
   }
@@ -490,14 +524,43 @@
     <section class="card">
       <h2>Biblioteca de música (<span id="music-count">0</span>)</h2>
       <p class="card-copy">
-        Faixas livres de direitos autorais usadas pelo gerador. Envie arquivos
-        baixados do Pixabay Music, YouTube Audio Library ou Free Music Archive.
+        Faixas usadas pelo conversor de imagem para vídeo. Você pode extrair somente
+        o áudio de um vídeo do YouTube ou enviar um arquivo que já esteja no computador.
       </p>
+
+      <div class="youtube-import">
+        <h3>Importar áudio do YouTube</h3>
+        <p>
+          Cole o link de um único vídeo. O servidor extrairá apenas o áudio,
+          converterá para MP3 e salvará a faixa no Cloudflare R2.
+        </p>
+        <div class="youtube-import-actions">
+          <div>
+            <label for="music-youtube-url">Link do vídeo</label>
+            <input
+              type="url"
+              id="music-youtube-url"
+              inputmode="url"
+              autocomplete="off"
+              placeholder="https://www.youtube.com/watch?v=..."
+            >
+          </div>
+          <button class="primary" id="btn-import-youtube" type="button" disabled>Extrair áudio</button>
+        </div>
+        <label class="authorization" for="music-youtube-authorized">
+          <input type="checkbox" id="music-youtube-authorized">
+          <span>Confirmo que tenho autorização para utilizar este conteúdo.</span>
+        </label>
+        <span id="music-youtube-status" role="status" aria-live="polite"></span>
+      </div>
+
       <ul id="music-list"></ul>
       <p id="empty-music" style="display:none; color: var(--text-dim); font-size: 14px;">Nenhuma música na biblioteca ainda.</p>
-      <button class="ghost small" id="btn-pick-music-file" type="button">Enviar música</button>
-      <input type="file" id="music-file-input" accept="audio/*" multiple style="display:none;">
-      <span id="music-status" role="status" aria-live="polite"></span>
+      <div class="music-file-upload">
+        <button class="ghost small" id="btn-pick-music-file" type="button">Enviar arquivo de áudio</button>
+        <input type="file" id="music-file-input" accept="audio/*" multiple style="display:none;">
+        <span id="music-status" role="status" aria-live="polite"></span>
+      </div>
     </section>
 
     <section class="card">
@@ -1510,6 +1573,16 @@
       name.className = 'name';
       name.textContent = track.name;
       li.appendChild(name);
+      if (track.source === 'youtube' && /^https:\/\/(www\.|m\.|music\.)?(youtube\.com|youtu\.be)\//i.test(track.sourceUrl || '')) {
+        var source = document.createElement('a');
+        source.className = 'source-tag';
+        source.textContent = 'YouTube';
+        source.href = track.sourceUrl;
+        source.target = '_blank';
+        source.rel = 'noopener noreferrer';
+        source.title = 'Abrir vídeo de origem';
+        li.appendChild(source);
+      }
       var del = document.createElement('button');
       del.className = 'danger small';
       del.textContent = 'Excluir';
@@ -1524,6 +1597,51 @@
     });
     list.appendChild(fragment);
   }
+
+  var youtubeUrlInput = $('music-youtube-url');
+  var youtubeAuthorizedInput = $('music-youtube-authorized');
+  var youtubeImportButton = $('btn-import-youtube');
+
+  function updateYoutubeImportButton() {
+    youtubeImportButton.disabled =
+      !youtubeUrlInput.value.trim() || !youtubeAuthorizedInput.checked;
+  }
+
+  youtubeUrlInput.addEventListener('input', updateYoutubeImportButton);
+  youtubeAuthorizedInput.addEventListener('change', updateYoutubeImportButton);
+  youtubeImportButton.addEventListener('click', function () {
+    var statusEl = $('music-youtube-status');
+    var url = youtubeUrlInput.value.trim();
+    if (!url || !youtubeAuthorizedInput.checked) { return; }
+
+    youtubeImportButton.disabled = true;
+    youtubeUrlInput.disabled = true;
+    youtubeAuthorizedInput.disabled = true;
+    setStatus(
+      statusEl,
+      'Lendo o vídeo, extraindo somente o áudio e enviando o MP3 ao R2. Aguarde...',
+      ''
+    );
+
+    api('/api/music/youtube', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: url, authorized: true })
+    })
+      .then(function (data) {
+        var trackName = data.music && data.music.name ? data.music.name : 'nova faixa';
+        setStatus(statusEl, 'Áudio importado: ' + trackName, 'ok');
+        youtubeUrlInput.value = '';
+        youtubeAuthorizedInput.checked = false;
+        loadMusic();
+      })
+      .catch(function (err) { setStatus(statusEl, err.message, 'err'); })
+      .finally(function () {
+        youtubeUrlInput.disabled = false;
+        youtubeAuthorizedInput.disabled = false;
+        updateYoutubeImportButton();
+      });
+  });
 
   function deleteMusic(track) {
     if (!confirm('Excluir "' + track.name + '" da biblioteca?')) { return; }
