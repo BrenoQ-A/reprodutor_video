@@ -123,13 +123,15 @@
   button.small { padding: 7px 10px; font-size: 12px; }
   button.link { background: none; border: none; color: var(--accent); padding: 0; font-weight: 400; text-decoration: underline; }
 
-  #status-line, #media-status, #config-status, #generate-status, #music-status, #video-upload-status {
+  #status-line, #reset-status, #admin-reset-status, #media-status, #config-status,
+  #generate-status, #music-status, #video-upload-status {
     font-size: 12px; line-height: 1.5; color: var(--text-dim); margin-top: 12px;
     padding: 10px 12px; border: 1px solid var(--line-soft); border-radius: 9px;
     background: rgba(255,255,255,0.025); display: block; overflow-wrap: anywhere;
   }
-  #status-line:empty, #media-status:empty, #config-status:empty, #generate-status:empty,
-  #music-status:empty, #video-upload-status:empty { display: none; }
+  #status-line:empty, #reset-status:empty, #admin-reset-status:empty, #media-status:empty,
+  #config-status:empty, #generate-status:empty, #music-status:empty,
+  #video-upload-status:empty { display: none; }
   .ok { color: var(--ok) !important; background: var(--ok-soft) !important; border-color: rgba(114,212,155,.2) !important; }
   .err { color: var(--danger) !important; background: var(--danger-soft) !important; border-color: rgba(255,107,93,.2) !important; }
   .processing-results { list-style: none; margin: 12px 0 0; padding: 0; }
@@ -333,7 +335,21 @@
   #main-area { display: none; }
   .footer-note { color: var(--text-dim); font-size: 12px; text-align: center; margin-top: 24px; }
   .footer-note a { color: var(--accent); }
-  #login-card { max-width: 720px; margin: 50px auto 20px; }
+  #login-card, #reset-card { max-width: 720px; margin: 50px auto 20px; }
+  .auth-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+  .admin-reset-layout {
+    display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 12px;
+  }
+  .reset-code-result {
+    margin-top: 16px; padding: 16px; border: 1px solid rgba(114, 212, 155, .25);
+    border-radius: 12px; background: var(--ok-soft);
+  }
+  .reset-code-result p { margin: 0 0 10px; color: var(--text-dim); font-size: 13px; }
+  .reset-code-line { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
+  .reset-code-line code {
+    color: var(--ok); font: 700 20px/1.2 Consolas, Menlo, monospace;
+    letter-spacing: 1.5px; user-select: all;
+  }
 
   @media (max-width: 820px) {
     .overview { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -354,6 +370,7 @@
     ul#media-list li .type-tag { margin-left: 102px; }
     .youtube-import-actions { grid-template-columns: 1fr; }
     .youtube-import-actions button { width: 100%; }
+    .admin-reset-layout { grid-template-columns: 1fr; }
     ul#music-list li { flex-wrap: wrap; }
     ul#music-list li .name { flex-basis: 100%; }
     .vpn-modal { padding: 10px; }
@@ -397,12 +414,50 @@
         <input type="text" id="in-invite">
       </div>
     </div>
-    <button class="primary" id="btn-submit">Entrar</button>
-    <button class="link small" id="btn-toggle-mode" type="button" style="margin-left: 10px;">Ainda não tenho cadastro</button>
+    <div class="auth-actions">
+      <button class="primary" id="btn-submit">Entrar</button>
+      <button class="link small" id="btn-toggle-mode" type="button">Ainda não tenho cadastro</button>
+      <button class="link small" id="btn-forgot-password" type="button">Esqueci minha senha</button>
+    </div>
     <span id="status-line" role="status" aria-live="polite"></span>
   </section>
 
+  <section class="card" id="reset-card" hidden>
+    <h2>Redefinir senha</h2>
+    <p class="card-copy">Solicite ao administrador um código temporário. Ele funciona uma vez e expira em 30 minutos.</p>
+    <div class="row">
+      <div><label for="reset-gpid">GPID</label><input type="text" id="reset-gpid" autocomplete="username"></div>
+      <div><label for="reset-code">Código temporário</label><input type="text" id="reset-code" autocomplete="one-time-code" placeholder="XXXX-XXXX-XXXX"></div>
+    </div>
+    <div class="row">
+      <div><label for="reset-password">Nova senha</label><input type="password" id="reset-password" autocomplete="new-password"></div>
+      <div><label for="reset-password-confirm">Confirmar nova senha</label><input type="password" id="reset-password-confirm" autocomplete="new-password"></div>
+    </div>
+    <div class="auth-actions">
+      <button class="primary" id="btn-reset-password" type="button">Salvar nova senha</button>
+      <button class="link small" id="btn-back-login" type="button">Voltar para entrar</button>
+    </div>
+    <span id="reset-status" role="status" aria-live="polite"></span>
+  </section>
+
   <div id="main-area">
+
+    <section class="card" id="admin-reset-card" hidden>
+      <h2>Redefinição de senha</h2>
+      <p class="card-copy">Gere um código temporário para um usuário. Ele será exibido somente agora, expira em 30 minutos e aceita no máximo cinco tentativas.</p>
+      <div class="admin-reset-layout">
+        <div><label for="admin-reset-gpid">GPID do usuário</label><input type="text" id="admin-reset-gpid" autocomplete="off"></div>
+        <button class="primary" id="btn-generate-reset" type="button">Gerar código</button>
+      </div>
+      <div class="reset-code-result" id="admin-reset-result" hidden>
+        <p id="admin-reset-description"></p>
+        <div class="reset-code-line">
+          <code id="admin-reset-code"></code>
+          <button class="ghost small" id="btn-copy-reset" type="button">Copiar código</button>
+        </div>
+      </div>
+      <span id="admin-reset-status" role="status" aria-live="polite"></span>
+    </section>
 
     <div class="overview" aria-label="Resumo do conteúdo">
       <article class="stat-card">
@@ -819,9 +874,17 @@
     $('login-title').textContent = mode === 'login' ? 'Entrar' : 'Criar cadastro';
     $('btn-submit').textContent = mode === 'login' ? 'Entrar' : 'Cadastrar';
     $('btn-toggle-mode').textContent = mode === 'login' ? 'Ainda não tenho cadastro' : 'Já tenho cadastro';
+    $('btn-forgot-password').hidden = mode !== 'login';
     $('invite-row').style.display = mode === 'register' ? 'grid' : 'none';
     setStatus($('status-line'), '', '');
   });
+  $('btn-forgot-password').addEventListener('click', function () {
+    $('reset-gpid').value = $('in-gpid').value.trim();
+    $('login-card').style.display = 'none';
+    $('reset-card').hidden = false;
+    setStatus($('reset-status'), '', '');
+  });
+  $('btn-back-login').addEventListener('click', function () { showLogin(); });
 
   $('btn-submit').addEventListener('click', function () {
     var gpid = $('in-gpid').value.trim();
@@ -844,26 +907,59 @@
       .then(function (data) {
         authToken = data.token || '';
         if (authToken) { sessionStorage.setItem('playerAuthToken', authToken); }
-        onLoggedIn(data.gpid);
+        onLoggedIn(data.gpid, data.isAdmin);
       })
       .catch(function (err) { setStatus(statusEl, 'Não foi possível falar com o servidor: ' + err.message, 'err'); });
   });
 
-  function showLogin(msg) {
+  $('btn-reset-password').addEventListener('click', function () {
+    var gpid = $('reset-gpid').value.trim();
+    var resetCode = $('reset-code').value.trim();
+    var password = $('reset-password').value;
+    var confirmation = $('reset-password-confirm').value;
+    var statusEl = $('reset-status');
+    if (!gpid || !resetCode || !password || !confirmation) {
+      setStatus(statusEl, 'Preencha todos os campos.', 'err'); return;
+    }
+    if (password.length < 8) {
+      setStatus(statusEl, 'A nova senha precisa ter pelo menos 8 caracteres.', 'err'); return;
+    }
+    if (password !== confirmation) {
+      setStatus(statusEl, 'As senhas informadas não são iguais.', 'err'); return;
+    }
+    $('btn-reset-password').disabled = true;
+    setStatus(statusEl, 'Redefinindo senha...', '');
+    fetch(BACKEND_URL + '/api/auth/reset-password', {
+      method: 'POST', credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ gpid: gpid, resetCode: resetCode, password: password })
+    }).then(parseResponse).then(function (data) {
+      $('in-gpid').value = gpid;
+      $('in-password').value = '';
+      showLogin(data.message, 'ok');
+    }).catch(function (err) {
+      setStatus(statusEl, err.message, 'err');
+    }).then(function () { $('btn-reset-password').disabled = false; });
+  });
+
+  function showLogin(msg, kind) {
     $('main-area').style.display = 'none';
+    $('reset-card').hidden = true;
     $('login-card').style.display = 'block';
     $('who').style.display = 'none';
     $('backend-status').textContent = 'Desconectado';
     $('backend-status').className = 'connection-pill';
-    if (msg) { setStatus($('status-line'), msg, 'err'); }
+    setStatus($('status-line'), msg || '', kind || (msg ? 'err' : ''));
   }
 
-  function onLoggedIn(gpid) {
+  function onLoggedIn(gpid, isAdmin) {
     var who = $('who');
     var identity = document.createElement('span');
     var logout = document.createElement('button');
     $('login-card').style.display = 'none';
+    $('reset-card').hidden = true;
     $('main-area').style.display = 'block';
+    $('admin-reset-card').hidden = !isAdmin;
     $('backend-status').textContent = 'Conectado';
     $('backend-status').className = 'connection-pill online';
     who.textContent = '';
@@ -889,13 +985,45 @@
     showVpnModal();
   }
 
+  $('btn-generate-reset').addEventListener('click', function () {
+    var gpid = $('admin-reset-gpid').value.trim();
+    var statusEl = $('admin-reset-status');
+    if (!gpid) { setStatus(statusEl, 'Informe o GPID do usuário.', 'err'); return; }
+    $('btn-generate-reset').disabled = true;
+    $('admin-reset-result').hidden = true;
+    setStatus(statusEl, 'Gerando código temporário...', '');
+    api('/api/admin/password-resets', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ gpid: gpid })
+    }).then(function (data) {
+      $('admin-reset-code').textContent = data.resetCode;
+      $('admin-reset-description').textContent = 'Código para ' + data.gpid +
+        '. Válido até ' + new Date(data.expiresAt).toLocaleString('pt-BR') + '.';
+      $('admin-reset-result').hidden = false;
+      setStatus(statusEl, 'Código gerado. Envie-o diretamente ao usuário.', 'ok');
+    }).catch(function (err) {
+      setStatus(statusEl, err.message, 'err');
+    }).then(function () { $('btn-generate-reset').disabled = false; });
+  });
+  $('btn-copy-reset').addEventListener('click', function () {
+    var code = $('admin-reset-code').textContent;
+    if (!code || !navigator.clipboard) {
+      setStatus($('admin-reset-status'), 'Selecione e copie o código manualmente.', 'err'); return;
+    }
+    navigator.clipboard.writeText(code).then(function () {
+      setStatus($('admin-reset-status'), 'Código copiado.', 'ok');
+    }).catch(function () {
+      setStatus($('admin-reset-status'), 'Selecione e copie o código manualmente.', 'err');
+    });
+  });
+
   // tenta restaurar sessão salva
   fetch(BACKEND_URL + '/api/auth/session', {
     credentials: 'include',
     headers: authHeaders({})
   })
     .then(function (res) { return res.ok ? res.json() : null; })
-    .then(function (data) { if (data) { onLoggedIn(data.gpid); } })
+    .then(function (data) { if (data) { onLoggedIn(data.gpid, data.isAdmin); } })
     .catch(function () { /* backend fora do ar ou primeira visita - fica na tela de login */ });
 
   // ---------- mídia: listar ----------
