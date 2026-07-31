@@ -125,7 +125,6 @@
   var index = -1;
   var currentId = null;
   var advanceTimer = null;
-  var videoSafetyTimer = null;
   var progressTimer = null;
   var refreshTimer = null;
   var playlistRevision = '';
@@ -136,6 +135,18 @@
   var failuresInCycle = 0;
   var startedAt = new Date().getTime();
   var pendingAudioStart = null;
+  var activeVideo = null;
+  var playbackRecoveryTimer = null;
+  var playbackWatchdogTimer = null;
+  var playbackRecoveryCount = 0;
+  var lastPlaybackTime = 0;
+  var lastPlaybackProgressAt = 0;
+  var playbackStableSince = 0;
+  var recoveryNotice = '';
+  var MAX_PLAYBACK_RECOVERIES = 3;
+  var PLAYBACK_STALL_WAIT_MS = 10000;
+  var PLAYBACK_WATCHDOG_MS = 2000;
+  var PLAYBACK_STALL_LIMIT_MS = 15000;
 
   var stageOuter = document.getElementById('stage-outer');
   var stageInner = document.getElementById('stage-inner');
@@ -225,6 +236,7 @@
     now = new Date();
     position = playlist.length && index >= 0 ? (index + 1) + '/' + playlist.length : '';
     updateNotice = reloadAfterCurrent ? '  ↻ NOVO CONTEÚDO' : '';
+    if (recoveryNotice) { updateNotice += '  ' + recoveryNotice; }
     hud.innerHTML =
       position + updateNotice + '  ' + pad2(now.getHours()) + ':' + pad2(now.getMinutes());
   }
@@ -295,17 +307,119 @@
     }
   }
 
+  function cancelPlaybackRecovery() {
+    if (playbackRecoveryTimer) {
+      clearTimeout(playbackRecoveryTimer);
+      playbackRecoveryTimer = null;
+    }
+  }
+
+  function updatePlaybackProgress(element) {
+    var now = new Date().getTime();
+    var currentTime = Number(element.currentTime) || 0;
+    if (currentTime > lastPlaybackTime + 0.2) {
+      lastPlaybackTime = currentTime;
+      lastPlaybackProgressAt = now;
+      if (!playbackStableSince) { playbackStableSince = now; }
+      if (playbackRecoveryCount > 0 && now - playbackStableSince >= 30000) {
+        playbackRecoveryCount = 0;
+        recoveryNotice = '';
+        updateHud();
+      }
+    }
+  }
+
+  function recoverPlayback(element, item, reason) {
+    var resumeAt;
+    if (element !== activeVideo || element.ended) { return; }
+    if (playbackRecoveryCount >= MAX_PLAYBACK_RECOVERIES) {
+      recoveryNotice = '';
+      updateHud();
+      mediaFailed(item, reason + ' O mesmo vídeo falhou após três tentativas.');
+      return;
+    }
+
+    playbackRecoveryCount += 1;
+    resumeAt = Math.max(0, lastPlaybackTime - 1);
+    recoveryNotice = 'RECUPERANDO ' + playbackRecoveryCount + '/' + MAX_PLAYBACK_RECOVERIES;
+    updateHud();
+    playbackStableSince = 0;
+    lastPlaybackProgressAt = new Date().getTime();
+    element._resumeAt = resumeAt;
+    element._recovering = true;
+
+    try { element.pause(); } catch (error) {}
+    try {
+      element.load();
+    } catch (error) {
+      schedulePlaybackRecovery(element, item, 'Falha ao recarregar o vídeo.');
+    }
+  }
+
+  function schedulePlaybackRecovery(element, item, reason) {
+    var observedTime;
+    if (element !== activeVideo || element.ended || playbackRecoveryTimer) { return; }
+    observedTime = Number(element.currentTime) || 0;
+    recoveryNotice = 'REDE INSTÁVEL';
+    updateHud();
+    playbackRecoveryTimer = setTimeout(function () {
+      playbackRecoveryTimer = null;
+      if (element !== activeVideo || element.ended) { return; }
+      if ((Number(element.currentTime) || 0) > observedTime + 0.5) {
+        recoveryNotice = '';
+        updateHud();
+        return;
+      }
+      recoverPlayback(element, item, reason);
+    }, PLAYBACK_STALL_WAIT_MS);
+  }
+
+  function startPlaybackWatchdog(element, item) {
+    lastPlaybackTime = Number(element.currentTime) || 0;
+    lastPlaybackProgressAt = new Date().getTime();
+    playbackStableSince = lastPlaybackProgressAt;
+    playbackWatchdogTimer = setInterval(function () {
+      if (element !== activeVideo || element.ended) { return; }
+      updatePlaybackProgress(element);
+      if (!element.paused && !element.seeking &&
+          new Date().getTime() - lastPlaybackProgressAt >= PLAYBACK_STALL_LIMIT_MS) {
+        schedulePlaybackRecovery(element, item, 'A reprodução ficou sem avançar.');
+      }
+    }, PLAYBACK_WATCHDOG_MS);
+  }
+
   function clearPlayback() {
+    var previousVideo = activeVideo;
+    activeVideo = null;
+    cancelPlaybackRecovery();
+    if (playbackWatchdogTimer) {
+      clearInterval(playbackWatchdogTimer);
+      playbackWatchdogTimer = null;
+    }
+    playbackRecoveryCount = 0;
+    lastPlaybackTime = 0;
+    lastPlaybackProgressAt = 0;
+    playbackStableSince = 0;
+    recoveryNotice = '';
     pendingAudioStart = null;
     document.removeEventListener('click', resumePlaybackWithAudio, false);
     document.removeEventListener('keydown', resumePlaybackWithAudio, false);
     if (advanceTimer) { clearTimeout(advanceTimer); advanceTimer = null; }
-    if (videoSafetyTimer) { clearTimeout(videoSafetyTimer); videoSafetyTimer = null; }
     if (progressTimer) { clearInterval(progressTimer); progressTimer = null; }
     if (currentAudio) {
       try { currentAudio.pause(); } catch (error) {}
       currentAudio.src = '';
       currentAudio = null;
+    }
+    if (previousVideo) {
+      previousVideo.onerror = null;
+      previousVideo.onwaiting = null;
+      previousVideo.onstalled = null;
+      try { previousVideo.pause(); } catch (error) {}
+      try {
+        previousVideo.removeAttribute('src');
+        previousVideo.load();
+      } catch (error) {}
     }
     stageInner.innerHTML = '';
   }
@@ -532,40 +646,68 @@
     element.setAttribute('playsinline', 'true');
     element.setAttribute('preload', 'auto');
     element.setAttribute('tabindex', '0');
+    element._resumeAt = 0;
+    element._recovering = false;
 
     element.onloadedmetadata = function () {
       fitToScreen(element, element.videoWidth, element.videoHeight);
-      if (videoSafetyTimer) { clearTimeout(videoSafetyTimer); }
-      duration = Number(element.duration) || Number(item.durationSeconds) || 14400;
-      videoSafetyTimer = setTimeout(function () {
-        mediaFailed(item, 'O vídeo ultrapassou o tempo esperado.');
-      }, (duration + 90) * 1000);
+      if (element._resumeAt > 0) {
+        try {
+          duration = Number(element.duration) || Number(item.durationSeconds) || 0;
+          element.currentTime = duration > 1
+            ? Math.min(element._resumeAt, duration - 1)
+            : element._resumeAt;
+        } catch (error) {}
+        element._resumeAt = 0;
+      }
+      if (element._recovering) {
+        element._recovering = false;
+        playVideoWithAudio(element, item);
+      }
     };
     element.onloadeddata = function () {
       applyBorderColor(element, element.videoWidth, element.videoHeight);
     };
     element.ontimeupdate = function () {
+      updatePlaybackProgress(element);
       if (element.duration && isFinite(element.duration)) {
         progressBar.style.width =
           Math.min(100, element.currentTime / element.duration * 100) + '%';
       }
     };
+    element.oncanplay = function () {
+      cancelPlaybackRecovery();
+      lastPlaybackProgressAt = new Date().getTime();
+    };
+    element.onplaying = function () {
+      cancelPlaybackRecovery();
+      lastPlaybackProgressAt = new Date().getTime();
+      playbackStableSince = lastPlaybackProgressAt;
+      recoveryNotice = playbackRecoveryCount > 0 ? 'RECUPERADO' : '';
+      updateHud();
+      hideMessage();
+    };
+    element.onwaiting = function () {
+      schedulePlaybackRecovery(element, item, 'A TV ficou aguardando dados do vídeo.');
+    };
+    element.onstalled = function () {
+      schedulePlaybackRecovery(element, item, 'O carregamento do vídeo foi interrompido.');
+    };
     element.onended = function () {
+      cancelPlaybackRecovery();
       finishCurrent();
     };
     element.onerror = function () {
       var code = element.error ? element.error.code : 'desconhecido';
-      mediaFailed(item, 'Erro de vídeo ' + code + '.');
+      schedulePlaybackRecovery(element, item, 'Erro de vídeo ' + code + '.');
     };
 
     stageInner.appendChild(element);
+    activeVideo = element;
     element.src = item.url;
     try { element.load(); } catch (error) {}
+    startPlaybackWatchdog(element, item);
     playVideoWithAudio(element, item);
-
-    videoSafetyTimer = setTimeout(function () {
-      mediaFailed(item, 'A TV não iniciou o vídeo.');
-    }, 120000);
   }
 
   function advance() {
