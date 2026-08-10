@@ -41,7 +41,6 @@ function createPlayer(options) {
   let timerId = 0;
   let reloadCount = 0;
   let playlistRequestCount = 0;
-  const playlistRequestUrls = [];
   let playlistResponse = opts.playlist || {
     updatedAt: 'v1',
     items: [
@@ -65,15 +64,18 @@ function createPlayer(options) {
     'hud'
   ].forEach((id) => { elements[id] = fakeElement('div'); });
 
+  elements['stage-outer'].clientWidth = opts.stageWidth || opts.width || 1280;
+  elements['stage-outer'].clientHeight = opts.stageHeight || opts.height || 720;
+
   const body = fakeElement('body');
-  body.clientWidth = opts.width || 1280;
-  body.clientHeight = opts.height || 720;
+  body.clientWidth = opts.bodyWidth || opts.width || 1280;
+  body.clientHeight = opts.bodyHeight || opts.height || 720;
 
   const document = {
     body,
     documentElement: {
-      clientWidth: opts.width || 1280,
-      clientHeight: opts.height || 720
+      clientWidth: opts.documentWidth || opts.width || 1280,
+      clientHeight: opts.documentHeight || opts.height || 720
     },
     getElementById(id) { return elements[id]; },
     addEventListener() {},
@@ -110,17 +112,12 @@ function createPlayer(options) {
       response = {
         playlistUrl: 'https://r2.example/playlist.json',
         configUrl: opts.runtimeConfig ? 'https://r2.example/config.json' : '',
-        gatewayTest: {
-          playlistUrl: 'https://gateway.example/playlist.json',
-          configUrl: 'https://gateway.example/config.json'
-        },
         playlistCheckSeconds: 5
       };
     } else if (this.url.indexOf('config.json') !== -1) {
       response = opts.runtimeConfig || {};
     } else {
       playlistRequestCount += 1;
-      playlistRequestUrls.push(this.url);
       response = playlistResponse;
     }
     this.readyState = 4;
@@ -133,11 +130,10 @@ function createPlayer(options) {
     document,
     XMLHttpRequest: FakeXmlHttpRequest,
     window: {
-      innerWidth: opts.width || 1280,
-      innerHeight: opts.height || 720,
+      innerWidth: opts.windowWidth || opts.width || 1280,
+      innerHeight: opts.windowHeight || opts.height || 720,
       addEventListener(name, callback) { windowListeners[name] = callback; },
       location: {
-        search: opts.locationSearch || '',
         reload() { reloadCount += 1; }
       }
     },
@@ -167,45 +163,61 @@ function createPlayer(options) {
     runTimer,
     setPlaylist(value) { playlistResponse = value; },
     get reloadCount() { return reloadCount; },
-    get playlistRequestCount() { return playlistRequestCount; },
-    get playlistRequestUrls() { return playlistRequestUrls.slice(); }
+    get playlistRequestCount() { return playlistRequestCount; }
   };
 }
 
-test('ativa o gateway somente quando a URL contém gateway=1', () => {
-  const normalPlayer = createPlayer();
-  assert.match(normalPlayer.playlistRequestUrls[0], /^https:\/\/r2\.example\/playlist\.json/);
-  assert.doesNotMatch(normalPlayer.elements.hud.innerHTML, /GATEWAY TESTE/);
+test('ignora cópias exatas já existentes na playlist', () => {
+  const player = createPlayer({
+    playlist: {
+      updatedAt: 'duplicated-v1',
+      items: [
+        {
+          id: 'a', name: 'Campanha.mp4', originalName: 'Campanha.mp4',
+          type: 'video', url: 'https://media.example/a.mp4',
+          sizeBytes: 1000, durationSeconds: 30
+        },
+        {
+          id: 'a-copy', name: 'Campanha.mp4', originalName: 'Campanha.mp4',
+          type: 'video', url: 'https://media.example/a-copy.mp4',
+          sizeBytes: 1000, durationSeconds: 30
+        },
+        {
+          id: 'b', name: 'Outra.mp4', originalName: 'Outra.mp4',
+          type: 'video', url: 'https://media.example/b.mp4',
+          sizeBytes: 2000, durationSeconds: 20
+        }
+      ]
+    }
+  });
 
-  const gatewayPlayer = createPlayer({ locationSearch: '?origem=tv&gateway=1' });
-  assert.match(
-    gatewayPlayer.playlistRequestUrls[0],
-    /^https:\/\/gateway\.example\/playlist\.json/
-  );
-  assert.match(gatewayPlayer.elements.hud.innerHTML, /GATEWAY TESTE/);
-
-  const similarFlagPlayer = createPlayer({ locationSearch: '?gateway=10' });
-  assert.match(
-    similarFlagPlayer.playlistRequestUrls[0],
-    /^https:\/\/r2\.example\/playlist\.json/
-  );
+  assert.match(player.elements.hud.innerHTML, /1\/2/);
 });
 
-test('preenche a tela mesmo quando a TV informa as dimensões do vídeo tardiamente', () => {
-  const player = createPlayer({ width: 1280, height: 720 });
+test('respeita a área real da TV mesmo quando o navegador informa um documento maior', () => {
+  const player = createPlayer({
+    width: 960,
+    height: 540,
+    stageWidth: 960,
+    stageHeight: 540,
+    documentWidth: 1280,
+    documentHeight: 720,
+    bodyWidth: 1280,
+    bodyHeight: 720
+  });
   const video = player.elements['stage-inner'].children[0];
 
-  assert.match(html, /name="viewport" content="width=1280, user-scalable=no"/);
-  assert.equal(video.style.width, '1280px');
-  assert.equal(video.style.height, '720px');
+  assert.match(html, /name="viewport" content="width=device-width, initial-scale=1\.0/);
+  assert.equal(video.style.width, '960px');
+  assert.equal(video.style.height, '540px');
 
   video.onloadedmetadata();
   video.videoWidth = 960;
   video.videoHeight = 540;
   video.onloadeddata();
 
-  assert.equal(video.style.width, '1280px');
-  assert.equal(video.style.height, '720px');
+  assert.equal(video.style.width, '960px');
+  assert.equal(video.style.height, '540px');
 });
 
 test('consulta e aplica a playlist nova somente após o vídeo atual', () => {
