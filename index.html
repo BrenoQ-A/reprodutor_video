@@ -107,6 +107,7 @@
   var BOOTSTRAP = {
     playlistUrl: '',
     configUrl: '',
+    gatewayTest: null,
     bootstrapRefreshMinutes: 30,
     playlistCheckSeconds: 5
   };
@@ -147,6 +148,7 @@
   var currentVideoRetryCount = 0;
   var pendingResumeTime = 0;
   var maintenanceReloadDue = false;
+  var gatewayTestMode = false;
 
   var VIDEO_STALL_TIMEOUT_MS = 20000;
   var VIDEO_RETRY_DELAY_MS = 2000;
@@ -181,6 +183,19 @@
       if (source.hasOwnProperty(key)) { target[key] = source[key]; }
     }
     return target;
+  }
+
+  function applyGatewayTestConfig() {
+    var search = window.location && window.location.search
+      ? String(window.location.search)
+      : '';
+    var requested = /(?:^|[?&])gateway=1(?:&|$)/.test(search);
+
+    if (!requested || !BOOTSTRAP.gatewayTest || !BOOTSTRAP.gatewayTest.playlistUrl) {
+      return;
+    }
+    merge(BOOTSTRAP, BOOTSTRAP.gatewayTest);
+    gatewayTestMode = true;
   }
 
   function cacheBust(url) {
@@ -243,6 +258,7 @@
       ? '  ↻ NOVO CONTEÚDO'
       : (maintenanceReloadDue ? '  ↻ MANUTENÇÃO PENDENTE' : '');
     hud.innerHTML =
+      (gatewayTestMode ? 'GATEWAY TESTE  ' : '') +
       position + updateNotice + '  ' + pad2(now.getHours()) + ':' + pad2(now.getMinutes());
   }
 
@@ -907,6 +923,7 @@
 
   requestJson('player-config.json', function (remoteBootstrap) {
     merge(BOOTSTRAP, remoteBootstrap);
+    applyGatewayTestConfig();
     start();
   }, function () {
     showMessage(
