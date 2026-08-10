@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=1280, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>Player de Sinalização</title>
 <style>
   html, body {
@@ -34,6 +34,8 @@
   #stage-inner img, #stage-inner video {
     display: block;
     margin: 0 auto;
+    max-width: 100%;
+    max-height: 100%;
   }
   #hud {
     position: absolute;
@@ -101,13 +103,12 @@
 <script>
 (function () {
   /*
-    Compatível com Samsung Tizen 2.3 / WebKit 538.1 (linha 2015).
+    Compatível com Samsung Smart Hub N14M / navegador WebKit legado.
     Implementação deliberadamente restrita a JavaScript ES5 e CSS clássico.
   */
   var BOOTSTRAP = {
     playlistUrl: '',
     configUrl: '',
-    gatewayTest: null,
     bootstrapRefreshMinutes: 30,
     playlistCheckSeconds: 5
   };
@@ -148,7 +149,6 @@
   var currentVideoRetryCount = 0;
   var pendingResumeTime = 0;
   var maintenanceReloadDue = false;
-  var gatewayTestMode = false;
 
   var VIDEO_STALL_TIMEOUT_MS = 20000;
   var VIDEO_RETRY_DELAY_MS = 2000;
@@ -183,19 +183,6 @@
       if (source.hasOwnProperty(key)) { target[key] = source[key]; }
     }
     return target;
-  }
-
-  function applyGatewayTestConfig() {
-    var search = window.location && window.location.search
-      ? String(window.location.search)
-      : '';
-    var requested = /(?:^|[?&])gateway=1(?:&|$)/.test(search);
-
-    if (!requested || !BOOTSTRAP.gatewayTest || !BOOTSTRAP.gatewayTest.playlistUrl) {
-      return;
-    }
-    merge(BOOTSTRAP, BOOTSTRAP.gatewayTest);
-    gatewayTestMode = true;
   }
 
   function cacheBust(url) {
@@ -257,12 +244,13 @@
     updateNotice = reloadAfterCurrent
       ? '  ↻ NOVO CONTEÚDO'
       : (maintenanceReloadDue ? '  ↻ MANUTENÇÃO PENDENTE' : '');
-    hud.innerHTML =
-      (gatewayTestMode ? 'GATEWAY TESTE  ' : '') +
-      position + updateNotice + '  ' + pad2(now.getHours()) + ':' + pad2(now.getMinutes());
+    hud.innerHTML = position + updateNotice + '  ' +
+      pad2(now.getHours()) + ':' + pad2(now.getMinutes());
   }
 
   function viewportSize() {
+    var stageWidth = Number(stageOuter.clientWidth) || 0;
+    var stageHeight = Number(stageOuter.clientHeight) || 0;
     var documentWidth = document.documentElement
       ? Number(document.documentElement.clientWidth) || 0
       : 0;
@@ -273,8 +261,8 @@
     var bodyHeight = document.body ? Number(document.body.clientHeight) || 0 : 0;
 
     return {
-      width: Math.max(Number(window.innerWidth) || 0, documentWidth, bodyWidth, 1280),
-      height: Math.max(Number(window.innerHeight) || 0, documentHeight, bodyHeight, 720)
+      width: stageWidth || Number(window.innerWidth) || documentWidth || bodyWidth || 1280,
+      height: stageHeight || Number(window.innerHeight) || documentHeight || bodyHeight || 720
     };
   }
 
@@ -776,9 +764,12 @@
   function normalizePlaylist(data) {
     var source = data && data.items ? data.items : data;
     var result = [];
+    var seen = {};
     var i;
     var item;
     var extension;
+    var type;
+    var signature;
 
     if (!source || typeof source.length !== 'number') { return result; }
     for (i = 0; i < source.length; i++) {
@@ -786,6 +777,31 @@
       if (!item || !item.url || !item.name) { continue; }
       extension = extOf(item.name);
       if (item.type === 'video' || contains(VIDEO_EXT, extension)) {
+        type = 'video';
+      } else if (item.type === 'image' || contains(IMAGE_EXT, extension)) {
+        type = 'image';
+      } else {
+        continue;
+      }
+
+      signature = '';
+      if (item.contentHash) {
+        signature = 'hash|' + String(item.contentHash);
+      } else if (Number(item.sizeBytes) > 0 && Number(item.durationSeconds) > 0) {
+        signature = [
+          'legacy',
+          type,
+          String(item.originalName || item.name).toLowerCase(),
+          String(Number(item.sizeBytes)),
+          String(Math.round(Number(item.durationSeconds) * 1000))
+        ].join('|');
+      }
+      if (signature && Object.prototype.hasOwnProperty.call(seen, signature)) {
+        continue;
+      }
+      if (signature) { seen[signature] = true; }
+
+      if (type === 'video') {
         result.push({
           id: item.id || item.key || item.name,
           name: item.name,
@@ -793,7 +809,7 @@
           type: 'video',
           durationSeconds: item.durationSeconds
         });
-      } else if (item.type === 'image' || contains(IMAGE_EXT, extension)) {
+      } else {
         result.push({
           id: item.id || item.key || item.name,
           name: item.name,
@@ -923,7 +939,6 @@
 
   requestJson('player-config.json', function (remoteBootstrap) {
     merge(BOOTSTRAP, remoteBootstrap);
-    applyGatewayTestConfig();
     start();
   }, function () {
     showMessage(

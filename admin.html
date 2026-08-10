@@ -480,9 +480,15 @@
 
     <section class="card">
       <h2>Mídias (<span id="media-count">0</span>)</h2>
+      <p class="card-copy">
+        Para a Samsung UN32J4290, os vídeos são padronizados em 720p,
+        H.264 Baseline/Main e AAC.
+      </p>
       <ul id="media-list"></ul>
       <p id="empty-media" style="display:none;">Nenhuma mídia na pasta /media ainda.</p>
       <button class="ghost" id="btn-save-order">Salvar ordem</button>
+      <button class="ghost" id="btn-remove-duplicates" type="button">Remover duplicados</button>
+      <button class="primary" id="btn-optimize-media" type="button">Otimizar vídeos existentes</button>
       <span id="media-status" role="status" aria-live="polite"></span>
     </section>
 
@@ -1224,6 +1230,102 @@
       .catch(function (err) { setStatus(statusEl, err.message, 'err'); loadMedia(); });
   });
 
+  $('btn-remove-duplicates').addEventListener('click', function () {
+    var button = $('btn-remove-duplicates');
+    var statusEl = $('media-status');
+    if (!confirm('Remover da playlist as cópias exatas e apagar seus arquivos duplicados?')) {
+      return;
+    }
+    button.disabled = true;
+    setStatus(statusEl, 'Procurando mídias duplicadas...', '');
+    api('/api/media/deduplicate', { method: 'POST' })
+      .then(function (data) {
+        var warning = data.deletionFailures && data.deletionFailures.length
+          ? ' Alguns arquivos órfãos não puderam ser apagados do armazenamento.'
+          : '';
+        setStatus(
+          statusEl,
+          data.removedCount
+            ? data.removedCount + ' cópia(s) removida(s).' + warning
+            : 'Nenhuma mídia duplicada foi encontrada.',
+          warning ? 'err' : 'ok'
+        );
+        media = data.media || [];
+        renderMedia();
+      })
+      .catch(function (err) { setStatus(statusEl, err.message, 'err'); })
+      .then(function () { button.disabled = false; });
+  });
+
+  $('btn-optimize-media').addEventListener('click', function () {
+    var button = $('btn-optimize-media');
+    var duplicateButton = $('btn-remove-duplicates');
+    var statusEl = $('media-status');
+    var removedCount = 0;
+    var converted = 0;
+    var unchanged = 0;
+    var failed = [];
+
+    if (!confirm(
+      'O sistema removerá duplicados e verificará os vídeos um por vez. ' +
+      'Arquivos fora do perfil da TV serão substituídos por versões 720p. Continuar?'
+    )) {
+      return;
+    }
+
+    button.disabled = true;
+    duplicateButton.disabled = true;
+    setStatus(statusEl, 'Removendo duplicados antes da otimização...', '');
+
+    api('/api/media/deduplicate', { method: 'POST' })
+      .then(function (deduplication) {
+        var videos;
+        removedCount = Number(deduplication.removedCount) || 0;
+        media = deduplication.media || [];
+        renderMedia();
+        videos = media.filter(function (item) { return item.type === 'video'; });
+
+        function optimizeNext(index) {
+          var item;
+          if (index >= videos.length) { return Promise.resolve(); }
+          item = videos[index];
+          setStatus(
+            statusEl,
+            'Otimizando vídeo ' + (index + 1) + ' de ' + videos.length + ': ' +
+              displayName(item) + '. Não feche esta página.',
+            ''
+          );
+          return api('/api/media/' + encodeURIComponent(item.id) + '/optimize', {
+            method: 'POST'
+          }).then(function (result) {
+            if (result.processing === 'unchanged') { unchanged += 1; }
+            else { converted += 1; }
+          }).catch(function (error) {
+            failed.push(displayName(item) + ' (' + error.message + ')');
+          }).then(function () {
+            return optimizeNext(index + 1);
+          });
+        }
+
+        return optimizeNext(0);
+      })
+      .then(function () {
+        var summary = removedCount + ' duplicado(s) removido(s), ' +
+          converted + ' vídeo(s) convertido(s) e ' + unchanged + ' já compatível(is).';
+        if (failed.length) {
+          summary += ' Falharam: ' + failed.join('; ') +
+            '. Você pode executar a otimização novamente.';
+        }
+        setStatus(statusEl, summary, failed.length ? 'err' : 'ok');
+        loadMedia();
+      })
+      .catch(function (err) { setStatus(statusEl, err.message, 'err'); })
+      .then(function () {
+        button.disabled = false;
+        duplicateButton.disabled = false;
+      });
+  });
+
   function deleteMedia(item) {
     if (!confirm('Excluir "' + displayName(item) + '" da TV?')) { return; }
     var statusEl = $('media-status');
@@ -1402,7 +1504,8 @@
         direct: 'Publicado diretamente, sem conversão',
         remuxed: 'MP4 reorganizado, sem recodificar',
         'audio-transcoded': 'Vídeo preservado; somente o áudio foi convertido',
-        transcoded: 'Vídeo recodificado para o perfil da TV'
+        transcoded: 'Vídeo recodificado para 720p no perfil da TV',
+        duplicate: 'Este vídeo já existia; a nova cópia foi descartada'
       };
       return labels[processing] || 'Processamento não informado pelo servidor';
     }
@@ -1423,12 +1526,13 @@
 
     function processingSummary() {
       var counts = {};
-      var order = ['direct', 'remuxed', 'audio-transcoded', 'transcoded', 'unknown'];
+      var order = ['direct', 'remuxed', 'audio-transcoded', 'transcoded', 'duplicate', 'unknown'];
       var labels = {
         direct: 'sem conversão',
         remuxed: 'MP4 reorganizado sem recodificação',
         'audio-transcoded': 'somente com o áudio convertido',
         transcoded: 'com recodificação completa',
+        duplicate: 'duplicado(s) ignorado(s)',
         unknown: 'sem informação de processamento'
       };
       published.forEach(function (item) {
