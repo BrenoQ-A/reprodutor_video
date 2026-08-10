@@ -41,6 +41,7 @@ function createPlayer(options) {
   let timerId = 0;
   let reloadCount = 0;
   let playlistRequestCount = 0;
+  const playlistRequestUrls = [];
   let playlistResponse = opts.playlist || {
     updatedAt: 'v1',
     items: [
@@ -109,12 +110,17 @@ function createPlayer(options) {
       response = {
         playlistUrl: 'https://r2.example/playlist.json',
         configUrl: opts.runtimeConfig ? 'https://r2.example/config.json' : '',
+        gatewayTest: {
+          playlistUrl: 'https://gateway.example/playlist.json',
+          configUrl: 'https://gateway.example/config.json'
+        },
         playlistCheckSeconds: 5
       };
     } else if (this.url.indexOf('config.json') !== -1) {
-      response = opts.runtimeConfig;
+      response = opts.runtimeConfig || {};
     } else {
       playlistRequestCount += 1;
+      playlistRequestUrls.push(this.url);
       response = playlistResponse;
     }
     this.readyState = 4;
@@ -131,6 +137,7 @@ function createPlayer(options) {
       innerHeight: opts.height || 720,
       addEventListener(name, callback) { windowListeners[name] = callback; },
       location: {
+        search: opts.locationSearch || '',
         reload() { reloadCount += 1; }
       }
     },
@@ -160,9 +167,29 @@ function createPlayer(options) {
     runTimer,
     setPlaylist(value) { playlistResponse = value; },
     get reloadCount() { return reloadCount; },
-    get playlistRequestCount() { return playlistRequestCount; }
+    get playlistRequestCount() { return playlistRequestCount; },
+    get playlistRequestUrls() { return playlistRequestUrls.slice(); }
   };
 }
+
+test('ativa o gateway somente quando a URL contém gateway=1', () => {
+  const normalPlayer = createPlayer();
+  assert.match(normalPlayer.playlistRequestUrls[0], /^https:\/\/r2\.example\/playlist\.json/);
+  assert.doesNotMatch(normalPlayer.elements.hud.innerHTML, /GATEWAY TESTE/);
+
+  const gatewayPlayer = createPlayer({ locationSearch: '?origem=tv&gateway=1' });
+  assert.match(
+    gatewayPlayer.playlistRequestUrls[0],
+    /^https:\/\/gateway\.example\/playlist\.json/
+  );
+  assert.match(gatewayPlayer.elements.hud.innerHTML, /GATEWAY TESTE/);
+
+  const similarFlagPlayer = createPlayer({ locationSearch: '?gateway=10' });
+  assert.match(
+    similarFlagPlayer.playlistRequestUrls[0],
+    /^https:\/\/r2\.example\/playlist\.json/
+  );
+});
 
 test('preenche a tela mesmo quando a TV informa as dimensões do vídeo tardiamente', () => {
   const player = createPlayer({ width: 1280, height: 720 });
