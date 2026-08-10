@@ -2,6 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=1280, user-scalable=no">
 <title>Player de Sinalização</title>
 <style>
   html, body {
@@ -15,6 +16,11 @@
     color: #EDEDEA;
   }
   #stage-outer {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
     display: table;
     width: 100%;
     height: 100%;
@@ -136,6 +142,15 @@
   var failuresInCycle = 0;
   var startedAt = new Date().getTime();
   var pendingAudioStart = null;
+  var currentMediaElement = null;
+  var videoWatchdogTimer = null;
+  var currentVideoRetryCount = 0;
+  var pendingResumeTime = 0;
+  var maintenanceReloadDue = false;
+
+  var VIDEO_STALL_TIMEOUT_MS = 20000;
+  var VIDEO_RETRY_DELAY_MS = 2000;
+  var VIDEO_RETRY_LIMIT = 2;
 
   var stageOuter = document.getElementById('stage-outer');
   var stageInner = document.getElementById('stage-inner');
@@ -224,17 +239,57 @@
     hud.style.display = 'block';
     now = new Date();
     position = playlist.length && index >= 0 ? (index + 1) + '/' + playlist.length : '';
-    updateNotice = reloadAfterCurrent ? '  ↻ NOVO CONTEÚDO' : '';
+    updateNotice = reloadAfterCurrent
+      ? '  ↻ NOVO CONTEÚDO'
+      : (maintenanceReloadDue ? '  ↻ MANUTENÇÃO PENDENTE' : '');
     hud.innerHTML =
       position + updateNotice + '  ' + pad2(now.getHours()) + ':' + pad2(now.getMinutes());
   }
 
+  function viewportSize() {
+    var documentWidth = document.documentElement
+      ? Number(document.documentElement.clientWidth) || 0
+      : 0;
+    var documentHeight = document.documentElement
+      ? Number(document.documentElement.clientHeight) || 0
+      : 0;
+    var bodyWidth = document.body ? Number(document.body.clientWidth) || 0 : 0;
+    var bodyHeight = document.body ? Number(document.body.clientHeight) || 0 : 0;
+
+    return {
+      width: Math.max(Number(window.innerWidth) || 0, documentWidth, bodyWidth, 1280),
+      height: Math.max(Number(window.innerHeight) || 0, documentHeight, bodyHeight, 720)
+    };
+  }
+
   function fitToScreen(element, naturalWidth, naturalHeight) {
+    var viewport;
     var scale;
-    if (!naturalWidth || !naturalHeight) { return; }
-    scale = Math.min(window.innerWidth / naturalWidth, window.innerHeight / naturalHeight);
+    if (!naturalWidth || !naturalHeight) {
+      naturalWidth = 16;
+      naturalHeight = 9;
+    }
+    viewport = viewportSize();
+    scale = Math.min(viewport.width / naturalWidth, viewport.height / naturalHeight);
     element.style.width = Math.floor(naturalWidth * scale) + 'px';
     element.style.height = Math.floor(naturalHeight * scale) + 'px';
+  }
+
+  function fitVideo(element) {
+    fitToScreen(element, Number(element.videoWidth) || 16, Number(element.videoHeight) || 9);
+  }
+
+  function refitCurrentMedia() {
+    if (!currentMediaElement) { return; }
+    if (String(currentMediaElement.tagName).toLowerCase() === 'video') {
+      fitVideo(currentMediaElement);
+      return;
+    }
+    fitToScreen(
+      currentMediaElement,
+      currentMediaElement.naturalWidth,
+      currentMediaElement.naturalHeight
+    );
   }
 
   function applyBorderColor(mediaElement, naturalWidth, naturalHeight) {
@@ -295,18 +350,103 @@
     }
   }
 
+  function clearVideoWatchdog() {
+    if (videoWatchdogTimer) {
+      clearTimeout(videoWatchdogTimer);
+      videoWatchdogTimer = null;
+    }
+  }
+
+  function retryVideo(item, detail) {
+    var resumeAt = pendingResumeTime;
+
+    if (currentMediaElement) {
+      try {
+        resumeAt = Math.max(
+          resumeAt,
+          Number(currentMediaElement.currentTime) || 0,
+          Number(currentMediaElement._resumeTime) || 0
+        );
+      } catch (error) {}
+    }
+
+    if (currentVideoRetryCount >= VIDEO_RETRY_LIMIT) {
+      currentVideoRetryCount = 0;
+      pendingResumeTime = 0;
+      mediaFailed(item, detail);
+      return;
+    }
+
+    currentVideoRetryCount += 1;
+    pendingResumeTime = Math.max(0, resumeAt - 3);
+    clearPlayback();
+    showMessage(
+      'Reconectando vídeo',
+      'A reprodução ficou sem avançar. Tentativa ' + currentVideoRetryCount +
+      ' de ' + VIDEO_RETRY_LIMIT + '...'
+    );
+    advanceTimer = setTimeout(function () {
+      advanceTimer = null;
+      hideMessage();
+      renderCurrent();
+    }, VIDEO_RETRY_DELAY_MS);
+  }
+
+  function armVideoWatchdog(element, item) {
+    var lastTime;
+
+    if (!element || element !== currentMediaElement) { return; }
+    clearVideoWatchdog();
+    try { lastTime = Number(element.currentTime) || 0; } catch (error) { lastTime = 0; }
+
+    videoWatchdogTimer = setTimeout(function checkProgress() {
+      var currentTime;
+      videoWatchdogTimer = null;
+      if (element !== currentMediaElement || element.ended || pendingAudioStart) { return; }
+      if (element.paused || element.seeking) { return; }
+
+      try { currentTime = Number(element.currentTime) || 0; } catch (error) { currentTime = 0; }
+      if (currentTime <= lastTime + 0.25) {
+        retryVideo(item, 'O vídeo permaneceu travado por mais de 20 segundos.');
+        return;
+      }
+
+      lastTime = currentTime;
+      videoWatchdogTimer = setTimeout(checkProgress, VIDEO_STALL_TIMEOUT_MS);
+    }, VIDEO_STALL_TIMEOUT_MS);
+  }
+
   function clearPlayback() {
     pendingAudioStart = null;
     document.removeEventListener('click', resumePlaybackWithAudio, false);
     document.removeEventListener('keydown', resumePlaybackWithAudio, false);
     if (advanceTimer) { clearTimeout(advanceTimer); advanceTimer = null; }
     if (videoSafetyTimer) { clearTimeout(videoSafetyTimer); videoSafetyTimer = null; }
+    clearVideoWatchdog();
     if (progressTimer) { clearInterval(progressTimer); progressTimer = null; }
     if (currentAudio) {
       try { currentAudio.pause(); } catch (error) {}
       currentAudio.src = '';
       currentAudio = null;
     }
+    if (currentMediaElement) {
+      currentMediaElement.onerror = null;
+      currentMediaElement.onended = null;
+      currentMediaElement.onwaiting = null;
+      currentMediaElement.onstalled = null;
+      currentMediaElement.onplaying = null;
+      try {
+        if (typeof currentMediaElement.pause === 'function') {
+          currentMediaElement.pause();
+        }
+        currentMediaElement.removeAttribute('src');
+        currentMediaElement.src = '';
+        if (typeof currentMediaElement.load === 'function') {
+          currentMediaElement.load();
+        }
+      } catch (error) {}
+    }
+    currentMediaElement = null;
     stageInner.innerHTML = '';
   }
 
@@ -322,6 +462,10 @@
   }
 
   function mediaFailed(item, detail) {
+    if (maintenanceReloadDue) {
+      window.location.reload();
+      return;
+    }
     if (reloadAfterCurrent) {
       activatePendingPlaylist();
       return;
@@ -452,6 +596,12 @@
 
   function finishCurrent() {
     failuresInCycle = 0;
+    currentVideoRetryCount = 0;
+    pendingResumeTime = 0;
+    if (maintenanceReloadDue) {
+      window.location.reload();
+      return;
+    }
     if (reloadAfterCurrent) {
       activatePendingPlaylist();
       return;
@@ -490,6 +640,7 @@
     var element;
     var duration;
     var override;
+    var resumeTime;
 
     if (!item) { return; }
     currentId = item.id || item.name;
@@ -499,6 +650,7 @@
 
     if (item.type === 'image') {
       element = document.createElement('img');
+      currentMediaElement = element;
       element.crossOrigin = 'anonymous';
       element.alt = item.name;
       element.onload = function () {
@@ -524,6 +676,7 @@
     }
 
     element = document.createElement('video');
+    currentMediaElement = element;
     element.crossOrigin = 'anonymous';
     element.autoplay = true;
     element.muted = false;
@@ -532,17 +685,44 @@
     element.setAttribute('playsinline', 'true');
     element.setAttribute('preload', 'auto');
     element.setAttribute('tabindex', '0');
+    resumeTime = pendingResumeTime;
+    pendingResumeTime = 0;
+    element._resumeTime = resumeTime;
+    fitVideo(element);
 
     element.onloadedmetadata = function () {
-      fitToScreen(element, element.videoWidth, element.videoHeight);
+      fitVideo(element);
+      if (element._resumeTime > 0) {
+        try {
+          element.currentTime = Math.min(
+            element._resumeTime,
+            Math.max(0, Number(element.duration) - 1)
+          );
+          element._resumeTime = 0;
+        } catch (error) {}
+      }
       if (videoSafetyTimer) { clearTimeout(videoSafetyTimer); }
       duration = Number(element.duration) || Number(item.durationSeconds) || 14400;
       videoSafetyTimer = setTimeout(function () {
-        mediaFailed(item, 'O vídeo ultrapassou o tempo esperado.');
+        retryVideo(item, 'O vídeo ultrapassou o tempo esperado.');
       }, (duration + 90) * 1000);
     };
     element.onloadeddata = function () {
+      fitVideo(element);
       applyBorderColor(element, element.videoWidth, element.videoHeight);
+    };
+    element.oncanplay = function () {
+      fitVideo(element);
+    };
+    element.onplaying = function () {
+      fitVideo(element);
+      armVideoWatchdog(element, item);
+    };
+    element.onwaiting = function () {
+      armVideoWatchdog(element, item);
+    };
+    element.onstalled = function () {
+      armVideoWatchdog(element, item);
     };
     element.ontimeupdate = function () {
       if (element.duration && isFinite(element.duration)) {
@@ -555,7 +735,7 @@
     };
     element.onerror = function () {
       var code = element.error ? element.error.code : 'desconhecido';
-      mediaFailed(item, 'Erro de vídeo ' + code + '.');
+      retryVideo(item, 'Erro de vídeo ' + code + '.');
     };
 
     stageInner.appendChild(element);
@@ -564,13 +744,15 @@
     playVideoWithAudio(element, item);
 
     videoSafetyTimer = setTimeout(function () {
-      mediaFailed(item, 'A TV não iniciou o vídeo.');
+      retryVideo(item, 'A TV não iniciou o vídeo.');
     }, 120000);
   }
 
   function advance() {
     clearPlayback();
     if (!playlist.length) { return; }
+    currentVideoRetryCount = 0;
+    pendingResumeTime = 0;
     index = (index + 1) % playlist.length;
     renderCurrent();
   }
@@ -683,6 +865,8 @@
 
   function schedulePlaylistRefresh(delayMs) {
     if (refreshTimer) { clearTimeout(refreshTimer); }
+    refreshTimer = null;
+    if (delayMs === undefined && currentMediaElement) { return; }
     refreshTimer = setTimeout(
       refreshPlaylist,
       delayMs || Math.max(2, Number(BOOTSTRAP.playlistCheckSeconds) || 5) * 1000
@@ -705,11 +889,17 @@
   function start() {
     updateHud();
     setInterval(updateHud, 15000);
+    if (window.addEventListener) {
+      window.addEventListener('resize', refitCurrentMedia, false);
+    } else {
+      window.onresize = refitCurrentMedia;
+    }
     loadRuntimeConfig(function () {
       refreshPlaylist();
       if (CONFIG.autoReloadHours > 0) {
         setTimeout(function () {
-          window.location.reload();
+          maintenanceReloadDue = true;
+          updateHud();
         }, CONFIG.autoReloadHours * 60 * 60 * 1000);
       }
     });

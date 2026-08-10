@@ -6,6 +6,9 @@ const path = require('node:path');
 const test = require('node:test');
 const vm = require('node:vm');
 
+const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+const script = html.match(/<script>([\s\S]*?)<\/script>/i)[1];
+
 function fakeElement(tagName) {
   let rawHtml = '';
   return {
@@ -30,17 +33,24 @@ function fakeElement(tagName) {
   };
 }
 
-test('aplica playlist nova após o vídeo sem recarregar a página', () => {
-  const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
-  const script = html.match(/<script>([\s\S]*?)<\/script>/i)[1];
+function createPlayer(options) {
+  const opts = options || {};
   const elements = {};
   const timers = new Map();
+  const windowListeners = {};
   let timerId = 0;
   let reloadCount = 0;
-  let playlistResponse = {
+  let playlistRequestCount = 0;
+  let playlistResponse = opts.playlist || {
     updatedAt: 'v1',
     items: [
-      { id: 'a', name: 'A.mp4', type: 'video', url: 'https://r2.example/A.mp4' }
+      {
+        id: 'a',
+        name: 'A.mp4',
+        type: 'video',
+        url: 'https://r2.example/A.mp4',
+        durationSeconds: 60
+      }
     ]
   };
 
@@ -54,15 +64,31 @@ test('aplica playlist nova após o vídeo sem recarregar a página', () => {
     'hud'
   ].forEach((id) => { elements[id] = fakeElement('div'); });
 
+  const body = fakeElement('body');
+  body.clientWidth = opts.width || 1280;
+  body.clientHeight = opts.height || 720;
+
   const document = {
+    body,
+    documentElement: {
+      clientWidth: opts.width || 1280,
+      clientHeight: opts.height || 720
+    },
     getElementById(id) { return elements[id]; },
     addEventListener() {},
     removeEventListener() {},
     createElement(tagName) {
       const element = fakeElement(tagName);
       if (tagName === 'video' || tagName === 'audio') {
-        element.play = function play() {};
-        element.pause = function pause() {};
+        element.currentTime = 0;
+        element.duration = 60;
+        element.videoWidth = 0;
+        element.videoHeight = 0;
+        element.paused = false;
+        element.ended = false;
+        element.seeking = false;
+        element.play = function play() { this.paused = false; };
+        element.pause = function pause() { this.paused = true; };
         element.load = function load() {};
       }
       return element;
@@ -82,10 +108,13 @@ test('aplica playlist nova após o vídeo sem recarregar a página', () => {
     if (this.url.indexOf('player-config.json') !== -1) {
       response = {
         playlistUrl: 'https://r2.example/playlist.json',
-        configUrl: '',
+        configUrl: opts.runtimeConfig ? 'https://r2.example/config.json' : '',
         playlistCheckSeconds: 5
       };
+    } else if (this.url.indexOf('config.json') !== -1) {
+      response = opts.runtimeConfig;
     } else {
+      playlistRequestCount += 1;
       response = playlistResponse;
     }
     this.readyState = 4;
@@ -98,8 +127,9 @@ test('aplica playlist nova após o vídeo sem recarregar a página', () => {
     document,
     XMLHttpRequest: FakeXmlHttpRequest,
     window: {
-      innerWidth: 1920,
-      innerHeight: 1080,
+      innerWidth: opts.width || 1280,
+      innerHeight: opts.height || 720,
+      addEventListener(name, callback) { windowListeners[name] = callback; },
       location: {
         reload() { reloadCount += 1; }
       }
@@ -115,29 +145,100 @@ test('aplica playlist nova após o vídeo sem recarregar a página', () => {
   };
 
   vm.runInNewContext(script, sandbox);
-  const firstVideo = elements['stage-inner'].children[0];
-  assert.equal(firstVideo.src, 'https://r2.example/A.mp4');
 
-  playlistResponse = {
+  function runTimer(delay) {
+    const timer = Array.from(timers.entries()).find((entry) => entry[1].delay === delay);
+    assert.ok(timer, 'temporizador de ' + delay + 'ms deve existir');
+    timers.delete(timer[0]);
+    timer[1].callback();
+  }
+
+  return {
+    elements,
+    timers,
+    windowListeners,
+    runTimer,
+    setPlaylist(value) { playlistResponse = value; },
+    get reloadCount() { return reloadCount; },
+    get playlistRequestCount() { return playlistRequestCount; }
+  };
+}
+
+test('preenche a tela mesmo quando a TV informa as dimensões do vídeo tardiamente', () => {
+  const player = createPlayer({ width: 1280, height: 720 });
+  const video = player.elements['stage-inner'].children[0];
+
+  assert.match(html, /name="viewport" content="width=1280, user-scalable=no"/);
+  assert.equal(video.style.width, '1280px');
+  assert.equal(video.style.height, '720px');
+
+  video.onloadedmetadata();
+  video.videoWidth = 960;
+  video.videoHeight = 540;
+  video.onloadeddata();
+
+  assert.equal(video.style.width, '1280px');
+  assert.equal(video.style.height, '720px');
+});
+
+test('consulta e aplica a playlist nova somente após o vídeo atual', () => {
+  const player = createPlayer();
+  const firstVideo = player.elements['stage-inner'].children[0];
+
+  assert.equal(firstVideo.src, 'https://r2.example/A.mp4');
+  assert.equal(player.playlistRequestCount, 1);
+  assert.equal(
+    Array.from(player.timers.values()).some((timer) => timer.delay === 5000),
+    false,
+    'não deve consultar a playlist durante a reprodução'
+  );
+
+  player.setPlaylist({
     updatedAt: 'v2',
     items: [
       { id: 'a', name: 'A.mp4', type: 'video', url: 'https://r2.example/A.mp4' },
       { id: 'b', name: 'B.mp4', type: 'video', url: 'https://r2.example/B.mp4' }
     ]
-  };
-  const refresh = Array.from(timers.entries()).find((entry) => entry[1].delay === 5000);
-  assert.ok(refresh, 'a verificação da playlist deve estar agendada');
-  timers.delete(refresh[0]);
-  refresh[1].callback();
-
-  assert.equal(
-    elements.hud.innerHTML.indexOf('NOVO CONTEÚDO') >= 0,
-    true,
-    'o player deve avisar que há conteúdo pendente'
-  );
+  });
   firstVideo.onended();
 
-  const secondVideo = elements['stage-inner'].children[0];
+  const secondVideo = player.elements['stage-inner'].children[0];
+  assert.equal(player.playlistRequestCount, 2);
   assert.equal(secondVideo.src, 'https://r2.example/B.mp4');
-  assert.equal(reloadCount, 0);
+  assert.equal(player.reloadCount, 0);
+});
+
+test('adia a recarga de manutenção até o término da mídia', () => {
+  const player = createPlayer();
+  const video = player.elements['stage-inner'].children[0];
+
+  player.runTimer(6 * 60 * 60 * 1000);
+  assert.equal(player.reloadCount, 0);
+  assert.match(player.elements.hud.innerHTML, /MANUTENÇÃO PENDENTE/);
+
+  video.onended();
+  assert.equal(player.reloadCount, 1);
+});
+
+test('retoma próximo ao ponto anterior quando o vídeo para de avançar', () => {
+  const player = createPlayer();
+  const firstVideo = player.elements['stage-inner'].children[0];
+
+  firstVideo.currentTime = 30;
+  firstVideo.paused = false;
+  firstVideo.onplaying();
+  player.runTimer(20000);
+
+  assert.match(player.elements['message-title'].innerHTML, /Reconectando vídeo/);
+  assert.equal(firstVideo.paused, true, 'a conexão anterior deve ser encerrada');
+  player.runTimer(2000);
+
+  const retriedVideo = player.elements['stage-inner'].children[0];
+  retriedVideo.videoWidth = 960;
+  retriedVideo.videoHeight = 540;
+  retriedVideo.onloadedmetadata();
+
+  assert.equal(retriedVideo.src, 'https://r2.example/A.mp4');
+  assert.equal(retriedVideo.currentTime, 27);
+  assert.equal(player.reloadCount, 0);
 });
