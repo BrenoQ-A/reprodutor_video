@@ -194,7 +194,7 @@ test('ignora cópias exatas já existentes na playlist', () => {
   assert.match(player.elements.hud.innerHTML, /1\/2/);
 });
 
-test('respeita a área real da TV mesmo quando o navegador informa um documento maior', () => {
+test('usa o canvas 1280x720 da Samsung quando o navegador informa 960x540', () => {
   const player = createPlayer({
     width: 960,
     height: 540,
@@ -207,17 +207,25 @@ test('respeita a área real da TV mesmo quando o navegador informa um documento 
   });
   const video = player.elements['stage-inner'].children[0];
 
-  assert.match(html, /name="viewport" content="width=device-width, initial-scale=1\.0/);
-  assert.equal(video.style.width, '960px');
-  assert.equal(video.style.height, '540px');
+  assert.match(html, /name="viewport" content="width=1280, initial-scale=1\.0/);
+  assert.equal(video.style.width, '1280px');
+  assert.equal(video.style.height, '720px');
 
   video.onloadedmetadata();
   video.videoWidth = 960;
   video.videoHeight = 540;
   video.onloadeddata();
 
-  assert.equal(video.style.width, '960px');
-  assert.equal(video.style.height, '540px');
+  assert.equal(video.style.width, '1280px');
+  assert.equal(video.style.height, '720px');
+});
+
+test('continua preenchendo uma tela de computador maior que 1280x720', () => {
+  const player = createPlayer({ width: 1920, height: 1080 });
+  const video = player.elements['stage-inner'].children[0];
+
+  assert.equal(video.style.width, '1920px');
+  assert.equal(video.style.height, '1080px');
 });
 
 test('consulta e aplica a playlist nova somente após o vídeo atual', () => {
