@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="viewport" content="width=1280, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>Player de Sinalização</title>
 <style>
   html, body {
@@ -10,6 +10,8 @@
     padding: 0;
     width: 100%;
     height: 100%;
+    min-width: 1280px;
+    min-height: 720px;
     background: #050505;
     overflow: hidden;
     font-family: Arial, Helvetica, sans-serif;
@@ -34,8 +36,6 @@
   #stage-inner img, #stage-inner video {
     display: block;
     margin: 0 auto;
-    max-width: 100%;
-    max-height: 100%;
   }
   #hud {
     position: absolute;
@@ -261,8 +261,20 @@
     var bodyHeight = document.body ? Number(document.body.clientHeight) || 0 : 0;
 
     return {
-      width: stageWidth || Number(window.innerWidth) || documentWidth || bodyWidth || 1280,
-      height: stageHeight || Number(window.innerHeight) || documentHeight || bodyHeight || 720
+      width: Math.max(
+        stageWidth,
+        Number(window.innerWidth) || 0,
+        documentWidth,
+        bodyWidth,
+        1280
+      ),
+      height: Math.max(
+        stageHeight,
+        Number(window.innerHeight) || 0,
+        documentHeight,
+        bodyHeight,
+        720
+      )
     };
   }
 
