@@ -693,7 +693,7 @@
 
     element = document.createElement('video');
     currentMediaElement = element;
-    element.crossOrigin = 'anonymous';
+    stageOuter.style.backgroundColor = '#050505';
     element.autoplay = true;
     element.muted = false;
     override = CONFIG.videoVolumeOverrides && CONFIG.videoVolumeOverrides[item.name];
@@ -725,7 +725,6 @@
     };
     element.onloadeddata = function () {
       fitVideo(element);
-      applyBorderColor(element, element.videoWidth, element.videoHeight);
     };
     element.oncanplay = function () {
       fitVideo(element);
