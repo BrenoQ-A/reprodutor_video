@@ -610,6 +610,42 @@
     schedulePlaylistRefresh();
   }
 
+  function restartSingleVideo() {
+    var item = playlist[index];
+    var element = currentMediaElement;
+    var duration;
+
+    if (!item || item.type !== 'video' || playlist.length !== 1 || !element) {
+      advance();
+      return;
+    }
+
+    failuresInCycle = 0;
+    currentVideoRetryCount = 0;
+    pendingResumeTime = 0;
+    clearVideoWatchdog();
+    if (videoSafetyTimer) {
+      clearTimeout(videoSafetyTimer);
+      videoSafetyTimer = null;
+    }
+    progressBar.style.width = '0%';
+
+    try {
+      element.currentTime = 0;
+      playVideoWithAudio(element, item);
+      armVideoWatchdog(element, item);
+      duration = Number(element.duration) || Number(item.durationSeconds) || 14400;
+      videoSafetyTimer = setTimeout(function () {
+        retryVideo(item, 'O vídeo em loop ultrapassou o tempo esperado.');
+      }, (duration + 90) * 1000);
+    } catch (error) {
+      retryVideo(item, 'A TV não conseguiu reiniciar o vídeo em loop.');
+      return;
+    }
+
+    schedulePlaylistRefresh();
+  }
+
   function finishCurrent() {
     failuresInCycle = 0;
     currentVideoRetryCount = 0;
@@ -624,7 +660,11 @@
     }
 
     if (!BOOTSTRAP.playlistUrl || !playlistRevision) {
-      advance();
+      if (playlist.length === 1 && playlist[0].type === 'video') {
+        restartSingleVideo();
+      } else {
+        advance();
+      }
       return;
     }
 
@@ -641,13 +681,21 @@
         return;
       }
       playlistRevision = updatedRevision;
-      advance();
-      schedulePlaylistRefresh();
+      if (playlist.length === 1 && playlist[0].type === 'video') {
+        restartSingleVideo();
+      } else {
+        advance();
+        schedulePlaylistRefresh();
+      }
     }, function () {
-      advance();
-      schedulePlaylistRefresh(
-        Math.max(1, Number(CONFIG.pollIntervalMinutes) || 5) * 60 * 1000
-      );
+      if (playlist.length === 1 && playlist[0].type === 'video') {
+        restartSingleVideo();
+      } else {
+        advance();
+        schedulePlaylistRefresh(
+          Math.max(1, Number(CONFIG.pollIntervalMinutes) || 5) * 60 * 1000
+        );
+      }
     });
   }
 
@@ -909,7 +957,11 @@
   function schedulePlaylistRefresh(delayMs) {
     if (refreshTimer) { clearTimeout(refreshTimer); }
     refreshTimer = null;
-    if (delayMs === undefined && currentMediaElement) { return; }
+    if (
+      delayMs === undefined &&
+      currentMediaElement &&
+      !(playlist.length === 1 && playlist[0] && playlist[0].type === 'video')
+    ) { return; }
     refreshTimer = setTimeout(
       refreshPlaylist,
       delayMs || Math.max(2, Number(BOOTSTRAP.playlistCheckSeconds) || 5) * 1000
