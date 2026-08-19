@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Diagnóstico da TV - Player</title>
+<style>
+html,body{margin:0;padding:0;background:#111;color:#eee;font-family:Arial,sans-serif;font-size:20px;line-height:1.4}body{padding:24px}h1{font-size:30px;margin:0 0 20px}h2{font-size:23px;margin:24px 0 8px;color:#ddd}.box{background:#1d1d1d;border:1px solid #444;padding:14px;margin:8px 0}.label{color:#aaa}.value{word-break:break-all}.ok{color:#9ee493}.warn{color:#ffd166}.bad{color:#ff7b7b}button{font-size:20px;padding:12px 18px;margin:12px 8px 12px 0}pre{white-space:pre-wrap;word-break:break-word;font-size:16px}.small{font-size:16px;color:#aaa}</style>
+</head>
+<body>
+<h1>Diagnóstico do Player de Sinalização</h1>
+<div id="summary" class="box">Executando testes...</div>
+<div id="results"></div>
+<button onclick="runTests()">Executar novamente</button>
+<div class="small">Tire uma foto desta tela ou copie os resultados para análise.</div>
+<script>
+(function(){window.runTests=function(){var out=document.getElementById('results'),summary=document.getElementById('summary'),rows=[],v=document.createElement('video'),c=document.createElement('canvas'),ua=navigator.userAgent||'',platform='Não identificado',engine='Desconhecido';function yn(x){return x?'SIM':'NÃO'}function add(group,name,value,cls){rows.push('<div class="box"><span class="label">'+group+' — '+name+': </span><span class="value '+(cls||'')+'">'+value+'</span></div>')}if(/Tizen/i.test(ua))platform='Samsung Tizen';else if(/SmartTV|SMART-TV|Maple|Orsay/i.test(ua))platform='Samsung Smart TV / possível Orsay-Legacy';if(/SamsungBrowser/i.test(ua))engine='Samsung Browser / WebKit';else if(/AppleWebKit/i.test(ua))engine='WebKit';else if(/Chrome/i.test(ua))engine='Chromium';add('Sistema','Plataforma detectada',platform,'warn');add('Sistema','User-Agent',ua);add('Sistema','navigator.platform',navigator.platform||'indisponível');add('Browser','Engine provável',engine,'warn');add('Tela','screen',screen.width+' x '+screen.height);add('Tela','viewport',(window.innerWidth||0)+' x '+(window.innerHeight||0));add('Browser','devicePixelRatio',window.devicePixelRatio||'indisponível');add('JavaScript','JSON',yn(!!window.JSON),window.JSON?'ok':'bad');add('JavaScript','Promise',yn(typeof Promise!=='undefined'),typeof Promise!=='undefined'?'ok':'warn');add('JavaScript','fetch',yn(typeof fetch==='function'),typeof fetch==='function'?'ok':'warn');add('JavaScript','WebSocket',yn(typeof WebSocket!=='undefined'),typeof WebSocket!=='undefined'?'ok':'warn');add('JavaScript','localStorage',testStorage(),'');add('Vídeo','elemento HTML5 video',yn(!!v.canPlayType),v.canPlayType?'ok':'bad');add('Vídeo','MP4 genérico',codec(v,'video/mp4'));add('Vídeo','H.264 Baseline + AAC',codec(v,'video/mp4; codecs="avc1.42E01E, mp4a.40.2"'));add('Vídeo','H.264 Main + AAC',codec(v,'video/mp4; codecs="avc1.4D401F, mp4a.40.2"'));add('Vídeo','H.264 High + AAC',codec(v,'video/mp4; codecs="avc1.640028, mp4a.40.2"'));add('Vídeo','WebM VP8',codec(v,'video/webm; codecs="vp8, vorbis"'));add('Gráficos','Canvas 2D',yn(!!(c.getContext&&c.getContext('2d'))),c.getContext&&c.getContext('2d')?'ok':'warn');add('Hardware','hardwareConcurrency',navigator.hardwareConcurrency||'API indisponível');add('Hardware','deviceMemory',navigator.deviceMemory?navigator.deviceMemory+' GB':'API indisponível');add('Rede','navigator.onLine',typeof navigator.onLine==='boolean'?yn(navigator.onLine):'API indisponível');out.innerHTML=rows.join('');summary.innerHTML='<b>Resultado preliminar:</b> '+platform+' | '+engine+'<br><span class="small">O User-Agent acima é o dado mais importante para confirmar Orsay vs Tizen e a geração do WebKit.</span>'}function codec(v,type){try{var r=v.canPlayType(type);return r?r.toUpperCase():'NÃO / vazio'}catch(e){return 'ERRO'}}function testStorage(){try{localStorage.setItem('_diag','1');localStorage.removeItem('_diag');return 'SIM'}catch(e){return 'NÃO / bloqueado'}}runTests()})();
+</script>
+</body>
+</html>
