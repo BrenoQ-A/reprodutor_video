@@ -1,0 +1,596 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Player de Sinalização - Legacy TV</title>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    background: #050505;
+    overflow: hidden;
+    font-family: Arial, Helvetica, sans-serif;
+  }
+  #stage {
+    position: absolute;
+    left: 0;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    background: #050505;
+    overflow: hidden;
+  }
+  #video, #image {
+    position: absolute;
+    display: none;
+    left: 0;
+    top: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+  #message {
+    position: absolute;
+    left: 0;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    display: table;
+    width: 100%;
+    height: 100%;
+    background: #050505;
+    color: #ededed;
+    text-align: center;
+  }
+  #message-inner {
+    display: table-cell;
+    vertical-align: middle;
+    padding: 20px;
+  }
+  #message-title {
+    font-size: 18px;
+    margin-bottom: 10px;
+  }
+  #message-text {
+    font-size: 14px;
+    color: #b8b8b4;
+    line-height: 1.5;
+  }
+</style>
+</head>
+<body>
+<div id="stage">
+  <video id="video" preload="auto" playsinline></video>
+  <img id="image" alt="">
+</div>
+<div id="message">
+  <div id="message-inner">
+    <div id="message-title">Iniciando player leve</div>
+    <div id="message-text">Carregando configuração...</div>
+  </div>
+</div>
+
+<script>
+(function () {
+  /*
+    Player dedicado a navegadores de TV antigos.
+    Regras principais:
+    - JavaScript ES5;
+    - viewport real do navegador, sem canvas fixo 1280x720;
+    - um único elemento <video> persistente;
+    - sem HUD, barra de progresso, canvas ou efeitos;
+    - playlist verificada em baixa frequência;
+    - watchdog simples para recuperar travamentos.
+  */
+
+  var BOOTSTRAP = {
+    playlistUrl: '',
+    configUrl: '',
+    playlistCheckSeconds: 60
+  };
+
+  var CONFIG = {
+    imageDurationSeconds: 15,
+    targetVolume: 0.8,
+    videoVolumeOverrides: {},
+    musicEnabled: false,
+    musicPlaylist: [],
+    imageMusicDurationSeconds: 40,
+    musicVolume: 0.5
+  };
+
+  var IMAGE_EXT = ['jpg', 'jpeg', 'png'];
+  var VIDEO_EXT = ['mp4'];
+  var STALL_CHECK_MS = 15000;
+  var STALL_LIMIT_MS = 30000;
+  var RETRY_DELAY_MS = 1500;
+
+  var stage = document.getElementById('stage');
+  var video = document.getElementById('video');
+  var image = document.getElementById('image');
+  var message = document.getElementById('message');
+  var messageTitle = document.getElementById('message-title');
+  var messageText = document.getElementById('message-text');
+
+  var playlist = [];
+  var pendingPlaylist = null;
+  var playlistRevision = '';
+  var index = -1;
+  var currentId = '';
+  var currentType = '';
+  var imageTimer = null;
+  var playlistTimer = null;
+  var watchdogTimer = null;
+  var retryTimer = null;
+  var currentAudio = null;
+  var waitingForAudio = false;
+  var lastVideoTime = 0;
+  var lastProgressAt = 0;
+  var retryCount = 0;
+
+  function contains(array, value) {
+    var i;
+    for (i = 0; i < array.length; i++) {
+      if (array[i] === value) { return true; }
+    }
+    return false;
+  }
+
+  function extOf(name) {
+    var parts = String(name || '').split('.');
+    return parts.length > 1 ? parts[parts.length - 1].toLowerCase() : '';
+  }
+
+  function merge(target, source) {
+    var key;
+    if (!source) { return target; }
+    for (key in source) {
+      if (source.hasOwnProperty(key)) { target[key] = source[key]; }
+    }
+    return target;
+  }
+
+  function cacheBust(url) {
+    return url + (url.indexOf('?') === -1 ? '?' : '&') + 't=' + new Date().getTime();
+  }
+
+  function requestJson(url, onSuccess, onError) {
+    var xhr = new XMLHttpRequest();
+    xhr.open('GET', cacheBust(url), true);
+    xhr.timeout = 30000;
+    xhr.onreadystatechange = function () {
+      var data;
+      if (xhr.readyState !== 4) { return; }
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try {
+          data = JSON.parse(xhr.responseText);
+          onSuccess(data);
+        } catch (error) {
+          onError('JSON inválido.');
+        }
+      } else {
+        onError('HTTP ' + xhr.status + '.');
+      }
+    };
+    xhr.onerror = function () { onError('Falha de rede.'); };
+    xhr.ontimeout = function () { onError('Tempo de rede esgotado.'); };
+    xhr.send();
+  }
+
+  function showMessage(title, text) {
+    messageTitle.innerHTML = title;
+    messageText.innerHTML = text;
+    message.style.display = 'table';
+  }
+
+  function hideMessage() {
+    message.style.display = 'none';
+  }
+
+  function viewportSize() {
+    var doc = document.documentElement;
+    var body = document.body;
+    var width = Number(window.innerWidth) ||
+      (doc ? Number(doc.clientWidth) : 0) ||
+      (body ? Number(body.clientWidth) : 0) || 1280;
+    var height = Number(window.innerHeight) ||
+      (doc ? Number(doc.clientHeight) : 0) ||
+      (body ? Number(body.clientHeight) : 0) || 720;
+    return { width: width, height: height };
+  }
+
+  function fitElement(element, naturalWidth, naturalHeight) {
+    var viewport = viewportSize();
+    var width = Number(naturalWidth) || 16;
+    var height = Number(naturalHeight) || 9;
+    var scale = Math.min(viewport.width / width, viewport.height / height);
+    var displayWidth = Math.max(1, Math.floor(width * scale));
+    var displayHeight = Math.max(1, Math.floor(height * scale));
+    element.style.width = displayWidth + 'px';
+    element.style.height = displayHeight + 'px';
+    element.style.left = Math.floor((viewport.width - displayWidth) / 2) + 'px';
+    element.style.top = Math.floor((viewport.height - displayHeight) / 2) + 'px';
+  }
+
+  function refit() {
+    if (currentType === 'video' && video.style.display !== 'none') {
+      fitElement(video, Number(video.videoWidth), Number(video.videoHeight));
+    } else if (currentType === 'image' && image.style.display !== 'none') {
+      fitElement(image, Number(image.naturalWidth), Number(image.naturalHeight));
+    }
+  }
+
+  function normalizePlaylist(data) {
+    var source = data && data.items ? data.items : data;
+    var result = [];
+    var seen = {};
+    var i;
+    var item;
+    var type;
+    var extension;
+    var signature;
+
+    if (!source || typeof source.length !== 'number') { return result; }
+
+    for (i = 0; i < source.length; i++) {
+      item = source[i];
+      if (!item || !item.url || !item.name) { continue; }
+      extension = extOf(item.name);
+      if (item.type === 'video' || contains(VIDEO_EXT, extension)) {
+        type = 'video';
+      } else if (item.type === 'image' || contains(IMAGE_EXT, extension)) {
+        type = 'image';
+      } else {
+        continue;
+      }
+
+      signature = String(item.contentHash || item.id || item.key || item.url);
+      if (seen[signature]) { continue; }
+      seen[signature] = true;
+
+      result.push({
+        id: item.id || item.key || item.name,
+        name: item.name,
+        url: item.url,
+        type: type,
+        durationSeconds: item.durationSeconds
+      });
+    }
+    return result;
+  }
+
+  function revisionOf(data, normalized) {
+    var parts = [];
+    var i;
+    if (data && data.updatedAt) { return String(data.updatedAt); }
+    for (i = 0; i < normalized.length; i++) {
+      parts.push(String(normalized[i].id) + '|' + String(normalized[i].url));
+    }
+    return parts.join('||');
+  }
+
+  function clearImageTimer() {
+    if (imageTimer) {
+      clearTimeout(imageTimer);
+      imageTimer = null;
+    }
+  }
+
+  function clearRetryTimer() {
+    if (retryTimer) {
+      clearTimeout(retryTimer);
+      retryTimer = null;
+    }
+  }
+
+  function stopImageAudio() {
+    if (currentAudio) {
+      try { currentAudio.pause(); } catch (error) {}
+      currentAudio.src = '';
+      currentAudio = null;
+    }
+  }
+
+  function applyPendingPlaylist() {
+    var oldId = currentId;
+    var i;
+    if (!pendingPlaylist) { return false; }
+    playlist = pendingPlaylist;
+    pendingPlaylist = null;
+    index = -1;
+    for (i = 0; i < playlist.length; i++) {
+      if (playlist[i].id === oldId) {
+        index = i;
+        break;
+      }
+    }
+    return true;
+  }
+
+  function advance() {
+    clearImageTimer();
+    stopImageAudio();
+    retryCount = 0;
+
+    if (pendingPlaylist) { applyPendingPlaylist(); }
+    if (!playlist.length) {
+      currentId = '';
+      currentType = '';
+      video.style.display = 'none';
+      image.style.display = 'none';
+      showMessage('Nenhuma mídia publicada', 'O player continuará verificando a playlist.');
+      return;
+    }
+
+    index = (index + 1) % playlist.length;
+    renderItem(playlist[index]);
+  }
+
+  function finishCurrent() {
+    if (pendingPlaylist) {
+      applyPendingPlaylist();
+      advance();
+      return;
+    }
+
+    if (playlist.length === 1 && currentType === 'video') {
+      try {
+        video.currentTime = 0;
+        lastVideoTime = 0;
+        lastProgressAt = new Date().getTime();
+        playVideo();
+      } catch (error) {
+        retryCurrent('Falha ao reiniciar vídeo único.');
+      }
+      return;
+    }
+
+    advance();
+  }
+
+  function requestAudioStart() {
+    waitingForAudio = true;
+    showMessage(
+      'Áudio aguardando autorização',
+      'Pressione OK/Enter ou clique na tela para iniciar a reprodução.'
+    );
+  }
+
+  function resumeAudio(event) {
+    var code;
+    if (!waitingForAudio) { return; }
+    if (event && event.type === 'keydown') {
+      code = event.keyCode || event.which;
+      if (code !== 13 && code !== 32) { return; }
+    }
+    waitingForAudio = false;
+    playVideo();
+  }
+
+  function playVideo() {
+    var result;
+    video.muted = false;
+    video.removeAttribute('muted');
+    try {
+      result = video.play();
+      if (result && typeof result.then === 'function' && typeof result.catch === 'function') {
+        result.then(function () {
+          hideMessage();
+        }).catch(function () {
+          requestAudioStart();
+        });
+      } else {
+        hideMessage();
+      }
+    } catch (error) {
+      requestAudioStart();
+    }
+  }
+
+  function retryCurrent(detail) {
+    var resumeAt;
+    var item = playlist[index];
+    if (!item || item.type !== 'video') {
+      advance();
+      return;
+    }
+    if (retryTimer) { return; }
+    retryCount += 1;
+    if (retryCount > 3) {
+      retryCount = 0;
+      advance();
+      return;
+    }
+
+    try { resumeAt = Math.max(0, (Number(video.currentTime) || 0) - 2); }
+    catch (error) { resumeAt = 0; }
+
+    showMessage('Recuperando reprodução', detail + '<br>Tentativa ' + retryCount + ' de 3.');
+    try { video.pause(); } catch (error2) {}
+    clearRetryTimer();
+    retryTimer = setTimeout(function () {
+      retryTimer = null;
+      video.src = item.url;
+      try { video.load(); } catch (error3) {}
+      video._resumeAt = resumeAt;
+    }, RETRY_DELAY_MS);
+  }
+
+  function renderVideo(item) {
+    var override;
+    clearImageTimer();
+    stopImageAudio();
+    image.style.display = 'none';
+    currentType = 'video';
+    currentId = item.id;
+    video.style.display = 'block';
+    override = CONFIG.videoVolumeOverrides && CONFIG.videoVolumeOverrides[item.name];
+    video.volume = override !== undefined ? Number(override) : Number(CONFIG.targetVolume);
+    video._resumeAt = 0;
+    video.src = item.url;
+    try { video.load(); } catch (error) {}
+  }
+
+  function renderImage(item) {
+    var duration = Number(CONFIG.imageDurationSeconds) || 15;
+    currentType = 'image';
+    currentId = item.id;
+    try { video.pause(); } catch (error) {}
+    video.style.display = 'none';
+    image.style.display = 'block';
+    image.alt = item.name;
+    image.src = item.url;
+
+    if (CONFIG.musicEnabled && CONFIG.musicPlaylist && CONFIG.musicPlaylist.length) {
+      currentAudio = document.createElement('audio');
+      currentAudio.src = CONFIG.musicPlaylist[index % CONFIG.musicPlaylist.length];
+      currentAudio.volume = Number(CONFIG.musicVolume) || 0.5;
+      try { currentAudio.play(); } catch (audioError) {}
+      duration = Number(CONFIG.imageMusicDurationSeconds) || 40;
+    }
+
+    imageTimer = setTimeout(finishCurrent, Math.max(1, duration) * 1000);
+  }
+
+  function renderItem(item) {
+    if (!item) { return; }
+    hideMessage();
+    if (item.type === 'image') {
+      renderImage(item);
+    } else {
+      renderVideo(item);
+    }
+  }
+
+  function refreshPlaylist() {
+    if (!BOOTSTRAP.playlistUrl) { return; }
+    requestJson(BOOTSTRAP.playlistUrl, function (data) {
+      var updated = normalizePlaylist(data);
+      var revision = revisionOf(data, updated);
+
+      if (!playlistRevision) {
+        playlistRevision = revision;
+        playlist = updated;
+        if (index === -1) { advance(); }
+        return;
+      }
+
+      if (revision !== playlistRevision) {
+        playlistRevision = revision;
+        pendingPlaylist = updated;
+        if (!currentId) {
+          applyPendingPlaylist();
+          advance();
+        }
+      }
+    }, function () {
+      if (!playlist.length) {
+        showMessage('Aguardando rede', 'Não foi possível consultar a playlist. Tentaremos novamente.');
+      }
+    });
+  }
+
+  function startPlaylistPolling() {
+    var seconds = Math.max(30, Number(BOOTSTRAP.playlistCheckSeconds) || 60);
+    if (playlistTimer) { clearInterval(playlistTimer); }
+    playlistTimer = setInterval(refreshPlaylist, seconds * 1000);
+  }
+
+  function watchdogTick() {
+    var now;
+    var currentTime;
+    if (currentType !== 'video' || video.style.display === 'none' || waitingForAudio) { return; }
+    if (video.paused || video.seeking || video.ended) { return; }
+
+    try { currentTime = Number(video.currentTime) || 0; }
+    catch (error) { currentTime = 0; }
+    now = new Date().getTime();
+
+    if (currentTime > lastVideoTime + 0.2) {
+      lastVideoTime = currentTime;
+      lastProgressAt = now;
+      return;
+    }
+
+    if (lastProgressAt && now - lastProgressAt >= STALL_LIMIT_MS) {
+      lastProgressAt = now;
+      retryCurrent('O vídeo ficou sem avançar por mais de 30 segundos.');
+    }
+  }
+
+  function loadRuntimeConfig(done) {
+    if (!BOOTSTRAP.configUrl) {
+      done();
+      return;
+    }
+    requestJson(BOOTSTRAP.configUrl, function (remote) {
+      merge(CONFIG, remote);
+      done();
+    }, function () {
+      done();
+    });
+  }
+
+  video.onloadedmetadata = function () {
+    if (video._resumeAt > 0) {
+      try {
+        video.currentTime = Math.min(video._resumeAt, Math.max(0, Number(video.duration) - 1));
+      } catch (error) {}
+      video._resumeAt = 0;
+    }
+    fitElement(video, Number(video.videoWidth), Number(video.videoHeight));
+    lastVideoTime = Number(video.currentTime) || 0;
+    lastProgressAt = new Date().getTime();
+  };
+
+  video.onloadeddata = function () {
+    fitElement(video, Number(video.videoWidth), Number(video.videoHeight));
+    playVideo();
+  };
+
+  video.onplaying = function () {
+    lastVideoTime = Number(video.currentTime) || 0;
+    lastProgressAt = new Date().getTime();
+    hideMessage();
+  };
+
+  video.onended = finishCurrent;
+  video.onerror = function () {
+    var code = video.error ? video.error.code : 'desconhecido';
+    retryCurrent('Erro de vídeo ' + code + '.');
+  };
+
+  image.onload = function () {
+    fitElement(image, Number(image.naturalWidth), Number(image.naturalHeight));
+  };
+  image.onerror = function () { advance(); };
+
+  document.addEventListener('click', resumeAudio, false);
+  document.addEventListener('keydown', resumeAudio, false);
+  if (window.addEventListener) {
+    window.addEventListener('resize', refit, false);
+  } else {
+    window.onresize = refit;
+  }
+
+  setInterval(watchdogTick, STALL_CHECK_MS);
+
+  requestJson('player-config.json', function (remoteBootstrap) {
+    merge(BOOTSTRAP, remoteBootstrap);
+    if (Number(BOOTSTRAP.playlistCheckSeconds) < 30) {
+      BOOTSTRAP.playlistCheckSeconds = 60;
+    }
+    loadRuntimeConfig(function () {
+      refreshPlaylist();
+      startPlaylistPolling();
+    });
+  }, function () {
+    showMessage('Configuração não encontrada', 'Não foi possível carregar player-config.json.');
+  });
+})();
+</script>
+</body>
+</html>
