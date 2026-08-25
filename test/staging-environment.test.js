@@ -16,23 +16,21 @@ function readJson(relativePath) {
   return JSON.parse(read(relativePath));
 }
 
-test('staging usa configuração e playlist locais', () => {
+test('staging usa objetos próprios no R2', () => {
   const bootstrap = readJson('staging/player-config.json');
+  const productionBootstrap = readJson('player-config.json');
 
-  assert.equal(bootstrap.playlistUrl, 'playlist.json');
-  assert.equal(bootstrap.configUrl, 'config.json');
-  assert.equal(String(bootstrap.playlistUrl).includes('r2.dev'), false);
-  assert.equal(String(bootstrap.configUrl).includes('r2.dev'), false);
+  assert.match(bootstrap.playlistUrl, /\/playlist-staging\.json$/);
+  assert.match(bootstrap.configUrl, /\/config-staging\.json$/);
+  assert.notEqual(bootstrap.playlistUrl, productionBootstrap.playlistUrl);
+  assert.notEqual(bootstrap.configUrl, productionBootstrap.configUrl);
 });
 
-test('playlist de staging começa vazia e não replica produção', () => {
+test('arquivos locais permanecem vazios como fallback seguro', () => {
   const playlist = readJson('staging/playlist.json');
-  const productionBootstrap = readJson('player-config.json');
 
   assert.ok(Array.isArray(playlist.items));
   assert.equal(playlist.items.length, 0);
-  assert.notEqual(productionBootstrap.playlistUrl, 'staging/playlist.json');
-  assert.notEqual(productionBootstrap.configUrl, 'staging/config.json');
 });
 
 test('entradas de staging reutilizam o código dos players sem alterá-lo', () => {
@@ -45,10 +43,23 @@ test('entradas de staging reutilizam o código dos players sem alterá-lo', () =
   assert.match(legacyLoader, /document\.write\(xhr\.responseText\)/);
 });
 
+test('painel de staging usa apenas endpoints de staging para conteúdo', () => {
+  const admin = read('staging/admin.html');
+
+  assert.match(admin, /\/api\/staging\/state/);
+  assert.match(admin, /\/api\/staging\/media\/copy/);
+  assert.match(admin, /\/api\/staging\/media\/sync-production/);
+  assert.match(admin, /\/api\/staging\/config/);
+  assert.doesNotMatch(admin, /\/api\/media\/upload/);
+  assert.doesNotMatch(admin, /\/api\/media\/reorder/);
+  assert.doesNotMatch(admin, /\/api\/config['"]/);
+});
+
 test('arquivos essenciais do staging existem', () => {
   [
     'index.html',
     'legacy.html',
+    'admin.html',
     'player-config.json',
     'config.json',
     'playlist.json',
