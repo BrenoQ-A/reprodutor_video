@@ -1,6 +1,0 @@
-{
-  "playlistUrl": "playlist-staging.json",
-  "configUrl": "config-staging.json",
-  "bootstrapRefreshMinutes": 30,
-  "playlistCheckSeconds": 15
-}
