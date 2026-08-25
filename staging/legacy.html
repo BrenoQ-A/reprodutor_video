@@ -20,10 +20,38 @@
   xhr.open('GET', url, true);
   xhr.timeout = 30000;
   xhr.onreadystatechange = function () {
+    var response;
+    var endGuard;
     if (xhr.readyState !== 4) { return; }
     if (xhr.status >= 200 && xhr.status < 300) {
+      /*
+        Alguns WebKit antigos chegam ao fim do MP4, mas não executam o loop
+        nativo nem disparam o evento ended de forma confiável. No staging,
+        instalamos um guardião externo que reutiliza o próprio onended do
+        player principal quando detecta o vídeo parado no limite final.
+      */
+      endGuard = '<script>(function(){' +
+        'var video=document.getElementById("video");' +
+        'var busy=false;var pausedEndTicks=0;' +
+        'function number(v){v=Number(v);return isFinite(v)?v:0;}' +
+        'function tick(){var duration,current,atPausedEnd=false;' +
+          'if(!video||busy){return;}' +
+          'duration=number(video.duration);current=number(video.currentTime);' +
+          'if(duration>0&&video.paused&&current>=Math.max(0,duration-0.75)){pausedEndTicks+=1;}else{pausedEndTicks=0;}' +
+          'atPausedEnd=pausedEndTicks>=2;' +
+          'if(!video.ended&&!atPausedEnd){return;}' +
+          'busy=true;pausedEndTicks=0;' +
+          'setTimeout(function(){busy=false;},4000);' +
+          'if(typeof video.onended==="function"){try{video.onended();return;}catch(e){}}' +
+          'try{video.currentTime=0;}catch(e2){}' +
+          'try{video.load();}catch(e3){}' +
+          'try{video.play();}catch(e4){}' +
+        '}' +
+        'setInterval(tick,1000);' +
+      '})();<\/script>';
+      response = xhr.responseText.replace('</body>', endGuard + '</body>');
       document.open();
-      document.write(xhr.responseText);
+      document.write(response);
       document.close();
       return;
     }
