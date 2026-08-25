@@ -1,6 +1,6 @@
 {
-  "playlistUrl": "https://pub-9e679f37c1ba415bbf59ba0d2ffacc09.r2.dev/playlist-staging.json",
-  "configUrl": "https://pub-9e679f37c1ba415bbf59ba0d2ffacc09.r2.dev/config-staging.json",
+  "playlistUrl": "https://reprodutor-video.brenoqa-contato.workers.dev/playlist-staging.json",
+  "configUrl": "https://reprodutor-video.brenoqa-contato.workers.dev/config-staging.json",
   "bootstrapRefreshMinutes": 30,
   "playlistCheckSeconds": 15
 }
