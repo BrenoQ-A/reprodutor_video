@@ -1,0 +1,15 @@
+{
+  "name": "player-midia-gateway",
+  "main": "src/index.js",
+  "compatibility_date": "2026-08-25",
+  "workers_dev": true,
+  "r2_buckets": [
+    {
+      "binding": "MEDIA_BUCKET",
+      "bucket_name": "player-sinalizacao"
+    }
+  ],
+  "vars": {
+    "ALLOWED_ORIGINS": "https://brenoq-a.github.io"
+  }
+}
