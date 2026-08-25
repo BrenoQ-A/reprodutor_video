@@ -111,6 +111,11 @@
   var RETRY_DELAY_MS = 1500;
   var PLAY_CONFIRM_MS = 2500;
   var RESTART_CONFIRM_MS = 3500;
+  var MAX_RECOVERY_ATTEMPTS = 3;
+  var RELOAD_DELAY_MS = 2500;
+  var RELOAD_WINDOW_MS = 60000;
+  var MAX_RELOADS_PER_WINDOW = 2;
+  var STABLE_PLAYBACK_RESET_MS = 10000;
 
   var stage = document.getElementById('stage');
   var video = document.getElementById('video');
@@ -136,6 +141,10 @@
   var lastProgressAt = 0;
   var retryCount = 0;
   var nativeLoopEnabled = false;
+  var recoveryAttempts = 0;
+  var lastRecoveryAt = 0;
+  var reloadScheduled = false;
+  var reloadTimer = null;
 
   function contains(array, value) {
     var i;
@@ -243,6 +252,80 @@
       clearTimeout(restartConfirmTimer);
       restartConfirmTimer = null;
     }
+  }
+
+  function reloadGuardState(now) {
+    var start = 0;
+    var count = 0;
+    try {
+      start = Number(window.localStorage.getItem('legacyReloadWindowStart')) || 0;
+      count = Number(window.localStorage.getItem('legacyReloadCount')) || 0;
+    } catch (error) {}
+
+    if (!start || now - start >= RELOAD_WINDOW_MS) {
+      start = now;
+      count = 0;
+    }
+    return { start: start, count: count };
+  }
+
+  function persistReloadGuard(state) {
+    try {
+      window.localStorage.setItem('legacyReloadWindowStart', String(state.start));
+      window.localStorage.setItem('legacyReloadCount', String(state.count));
+    } catch (error) {}
+  }
+
+  function scheduleSafeReload(reason) {
+    var now;
+    var state;
+    var waitMs;
+    if (reloadScheduled) { return; }
+
+    now = new Date().getTime();
+    state = reloadGuardState(now);
+    if (state.count >= MAX_RELOADS_PER_WINDOW) {
+      waitMs = Math.max(RELOAD_DELAY_MS, RELOAD_WINDOW_MS - (now - state.start) + 1000);
+      reloadScheduled = true;
+      showMessage(
+        'Recuperação aguardando',
+        'O navegador travou repetidamente. O player aguardará alguns segundos antes de reiniciar novamente.'
+      );
+      reloadTimer = setTimeout(function () {
+        reloadScheduled = false;
+        reloadTimer = null;
+        scheduleSafeReload(reason);
+      }, waitMs);
+      return;
+    }
+
+    state.count += 1;
+    persistReloadGuard(state);
+    reloadScheduled = true;
+    showMessage(
+      'Reiniciando player',
+      (reason || 'A reprodução não respondeu às tentativas de recuperação.') +
+      '<br>Recarregando a página para reiniciar o decodificador da TV.'
+    );
+    reloadTimer = setTimeout(function () {
+      try { window.location.reload(); } catch (error) { window.location.href = window.location.href; }
+    }, RELOAD_DELAY_MS);
+  }
+
+  function notePlaybackProgress(now) {
+    if (!lastRecoveryAt || now - lastRecoveryAt >= STABLE_PLAYBACK_RESET_MS) {
+      recoveryAttempts = 0;
+    }
+  }
+
+  function recoverFromWatchdog(detail) {
+    recoveryAttempts += 1;
+    lastRecoveryAt = new Date().getTime();
+    if (recoveryAttempts > MAX_RECOVERY_ATTEMPTS) {
+      scheduleSafeReload(detail);
+      return;
+    }
+    retryCurrent(detail + '<br>Recuperação ' + recoveryAttempts + ' de ' + MAX_RECOVERY_ATTEMPTS + '.');
   }
 
   function viewportSize() {
@@ -579,6 +662,8 @@
 
   function renderItem(item) {
     if (!item) { return; }
+    recoveryAttempts = 0;
+    lastRecoveryAt = 0;
     showMessage('Carregando mídia', item.name || 'Vídeo');
     if (item.type === 'image') {
       renderImage(item);
@@ -691,12 +776,13 @@
       */
       lastVideoTime = currentTime;
       lastProgressAt = now;
+      notePlaybackProgress(now);
       return;
     }
 
     if (lastProgressAt && now - lastProgressAt >= STALL_LIMIT_MS) {
       lastProgressAt = now;
-      retryCurrent('O vídeo ficou sem avançar por mais de 30 segundos.');
+      recoverFromWatchdog('O vídeo ficou sem avançar por mais de 30 segundos.');
     }
   }
 
@@ -747,7 +833,7 @@
   video.onended = finishCurrent;
   video.onerror = function () {
     var code = video.error ? video.error.code : 'desconhecido';
-    retryCurrent('Erro de vídeo ' + code + '.');
+    recoverFromWatchdog('Erro de vídeo ' + code + '.');
   };
 
   image.onload = function () {
