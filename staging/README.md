@@ -4,23 +4,36 @@ Este diretório fornece um ambiente de teste isolado da configuração de produ�
 
 ## Entradas
 
-- `staging/index.html`: carrega o código atual de `../index.html`, mas resolve `player-config.json` dentro deste diretório.
-- `staging/legacy.html`: carrega o código atual de `../legacy.html`, mantendo inclusive parâmetros como `?fit=cover`, mas resolve `player-config.json` dentro deste diretório.
+- `staging/index.html`: carrega o código atual de `../index.html`, mas usa o bootstrap de staging.
+- `staging/legacy.html`: carrega o código atual de `../legacy.html`, mantendo parâmetros como `?fit=cover`, `?fit=contain` e `?fit=stretch`.
+- `staging/admin.html`: painel exclusivo do staging. Ele autentica usando a mesma conta do painel principal, mas grava apenas em `playlist-staging.json` e `config-staging.json`.
 
-Como o documento final continua na URL `/staging/...`, todas as URLs relativas usadas pelo player apontam para os arquivos de staging abaixo, sem alterar `index.html`, `legacy.html` ou `player-config.json` de produção.
+## Estado persistente
 
-## Configuração isolada
+O bootstrap `staging/player-config.json` aponta para dois objetos próprios no Cloudflare R2:
 
-- `player-config.json`: bootstrap do staging.
-- `config.json`: parâmetros de execução do staging.
-- `playlist.json`: playlist de teste; começa vazia para impedir reprodução acidental de conteúdo de produção.
+- `playlist-staging.json`
+- `config-staging.json`
+
+Esses objetos são criados e mantidos pela API `/api/staging` do backend. A playlist de produção (`playlist.json`) e a configuração de produção (`config.json`) não são modificadas pelo fluxo de staging.
+
+A mídia física pode ser reaproveitada a partir da produção por referência ao mesmo objeto no R2. Remover uma mídia do staging remove somente sua entrada em `playlist-staging.json`; o arquivo de produção não é excluído.
 
 ## URLs após publicação no GitHub Pages
 
 - Player principal: `https://brenoq-a.github.io/reprodutor_video/staging/`
 - Player legado: `https://brenoq-a.github.io/reprodutor_video/staging/legacy.html`
-- Player legado com ajuste de enquadramento: `https://brenoq-a.github.io/reprodutor_video/staging/legacy.html?fit=cover`
+- Painel de staging: `https://brenoq-a.github.io/reprodutor_video/staging/admin.html`
+- Legacy cover: `https://brenoq-a.github.io/reprodutor_video/staging/legacy.html?fit=cover`
+
+## Fluxo recomendado
+
+1. Entre em `staging/admin.html` com uma conta administradora.
+2. Selecione mídias de produção e adicione apenas as referências necessárias ao staging, ou use o espelhamento completo quando quiser reproduzir a playlist atual em um ambiente de teste.
+3. Ajuste enquadramento, volume, canvas e demais parâmetros do staging.
+4. Valide no player normal ou legacy de staging.
+5. Somente depois replique manualmente a mudança aprovada para produção.
 
 ## Regra de segurança
 
-Mudanças de conteúdo de staging devem ocorrer apenas em `staging/playlist.json` e `staging/config.json` até que o painel administrativo ganhe suporte explícito a ambientes. Nunca reutilize a playlist de produção por cópia automática.
+O staging nunca deve excluir ou sobrescrever `playlist.json`, `config.json` ou objetos de mídia da produção. As operações de remoção e limpeza do painel de staging são limitadas aos metadados de staging.
