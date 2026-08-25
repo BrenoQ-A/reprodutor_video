@@ -1,0 +1,16 @@
+{
+  "imageDurationSeconds": 15,
+  "pollIntervalMinutes": 5,
+  "showHud": true,
+  "autoReloadHours": 6,
+  "targetVolume": 0.8,
+  "videoVolumeOverrides": {},
+  "fillBorderColor": true,
+  "musicEnabled": false,
+  "musicPlaylist": [],
+  "imageMusicDurationSeconds": 40,
+  "musicVolume": 0.5,
+  "legacyFitMode": "cover",
+  "legacyCanvasWidth": 1280,
+  "legacyCanvasHeight": 720
+}
