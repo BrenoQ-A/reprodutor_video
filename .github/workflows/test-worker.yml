@@ -1,0 +1,30 @@
+name: Test media gateway worker
+
+on:
+  pull_request:
+    paths:
+      - 'worker/**'
+      - '.github/workflows/test-worker.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'worker/**'
+      - '.github/workflows/test-worker.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Run Worker tests
+        run: node --test worker/test/*.test.js
