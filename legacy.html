@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="viewport" content="width=1280, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>Player de Sinalização - Legacy TV</title>
 <style>
   html, body {
@@ -10,6 +10,8 @@
     padding: 0;
     width: 100%;
     height: 100%;
+    min-width: 1280px;
+    min-height: 720px;
     background: #050505;
     overflow: hidden;
     font-family: Arial, Helvetica, sans-serif;
@@ -18,10 +20,12 @@
     position: absolute;
     left: 0;
     top: 0;
-    right: 0;
-    bottom: 0;
-    background: #050505;
+    width: 100%;
+    height: 100%;
+    min-width: 1280px;
+    min-height: 720px;
     overflow: hidden;
+    background: #050505;
   }
   #video, #image {
     position: absolute;
@@ -31,7 +35,6 @@
     margin: 0;
     padding: 0;
     border: 0;
-    background: #050505;
   }
   #message {
     position: absolute;
@@ -77,7 +80,10 @@
 
 <script>
 (function () {
-  'use strict';
+  /*
+    Player leve para Smart TVs antigas.
+    Mantém JavaScript ES5 e um único elemento <video> persistente.
+  */
 
   var BOOTSTRAP = {
     playlistUrl: '',
@@ -92,7 +98,10 @@
     musicEnabled: false,
     musicPlaylist: [],
     imageMusicDurationSeconds: 40,
-    musicVolume: 0.5
+    musicVolume: 0.5,
+    legacyFitMode: 'cover',
+    legacyCanvasWidth: 1280,
+    legacyCanvasHeight: 720
   };
 
   var IMAGE_EXT = ['jpg', 'jpeg', 'png'];
@@ -101,7 +110,9 @@
   var STALL_LIMIT_MS = 30000;
   var RETRY_DELAY_MS = 1500;
   var PLAY_CONFIRM_MS = 2500;
+  var RESTART_CONFIRM_MS = 3500;
 
+  var stage = document.getElementById('stage');
   var video = document.getElementById('video');
   var image = document.getElementById('image');
   var message = document.getElementById('message');
@@ -118,11 +129,13 @@
   var playlistTimer = null;
   var retryTimer = null;
   var playConfirmTimer = null;
+  var restartConfirmTimer = null;
   var currentAudio = null;
   var waitingForAudio = false;
   var lastVideoTime = 0;
   var lastProgressAt = 0;
   var retryCount = 0;
+  var nativeLoopEnabled = false;
 
   function contains(array, value) {
     var i;
@@ -144,6 +157,27 @@
       if (source.hasOwnProperty(key)) { target[key] = source[key]; }
     }
     return target;
+  }
+
+  function queryValue(name) {
+    var search = String(window.location.search || '').replace(/^\?/, '');
+    var parts = search ? search.split('&') : [];
+    var i;
+    var pair;
+    for (i = 0; i < parts.length; i++) {
+      pair = parts[i].split('=');
+      if (decodeURIComponent(pair[0] || '') === name) {
+        return decodeURIComponent(pair.slice(1).join('=') || '');
+      }
+    }
+    return '';
+  }
+
+  function applyQueryOverrides() {
+    var fit = String(queryValue('fit') || '').toLowerCase();
+    if (fit === 'contain' || fit === 'cover' || fit === 'stretch') {
+      CONFIG.legacyFitMode = fit;
+    }
   }
 
   function cacheBust(url) {
@@ -183,13 +217,6 @@
     message.style.display = 'none';
   }
 
-  function clearPlayConfirm() {
-    if (playConfirmTimer) {
-      clearTimeout(playConfirmTimer);
-      playConfirmTimer = null;
-    }
-  }
-
   function clearImageTimer() {
     if (imageTimer) {
       clearTimeout(imageTimer);
@@ -204,15 +231,37 @@
     }
   }
 
+  function clearPlayConfirm() {
+    if (playConfirmTimer) {
+      clearTimeout(playConfirmTimer);
+      playConfirmTimer = null;
+    }
+  }
+
+  function clearRestartConfirm() {
+    if (restartConfirmTimer) {
+      clearTimeout(restartConfirmTimer);
+      restartConfirmTimer = null;
+    }
+  }
+
   function viewportSize() {
     var doc = document.documentElement;
     var body = document.body;
-    var width = Number(window.innerWidth) ||
-      (doc ? Number(doc.clientWidth) : 0) ||
-      (body ? Number(body.clientWidth) : 0) || 1280;
-    var height = Number(window.innerHeight) ||
-      (doc ? Number(doc.clientHeight) : 0) ||
-      (body ? Number(body.clientHeight) : 0) || 720;
+    var width = Math.max(
+      Number(stage.clientWidth) || 0,
+      Number(window.innerWidth) || 0,
+      doc ? Number(doc.clientWidth) || 0 : 0,
+      body ? Number(body.clientWidth) || 0 : 0,
+      Number(CONFIG.legacyCanvasWidth) || 1280
+    );
+    var height = Math.max(
+      Number(stage.clientHeight) || 0,
+      Number(window.innerHeight) || 0,
+      doc ? Number(doc.clientHeight) || 0 : 0,
+      body ? Number(body.clientHeight) || 0 : 0,
+      Number(CONFIG.legacyCanvasHeight) || 720
+    );
     return { width: width, height: height };
   }
 
@@ -220,9 +269,22 @@
     var viewport = viewportSize();
     var width = Number(naturalWidth) || 16;
     var height = Number(naturalHeight) || 9;
-    var scale = Math.min(viewport.width / width, viewport.height / height);
-    var displayWidth = Math.max(1, Math.floor(width * scale));
-    var displayHeight = Math.max(1, Math.floor(height * scale));
+    var fitMode = String(CONFIG.legacyFitMode || 'cover').toLowerCase();
+    var scale;
+    var displayWidth;
+    var displayHeight;
+
+    if (fitMode === 'stretch') {
+      displayWidth = viewport.width;
+      displayHeight = viewport.height;
+    } else {
+      scale = fitMode === 'contain'
+        ? Math.min(viewport.width / width, viewport.height / height)
+        : Math.max(viewport.width / width, viewport.height / height);
+      displayWidth = Math.max(1, Math.ceil(width * scale));
+      displayHeight = Math.max(1, Math.ceil(height * scale));
+    }
+
     element.style.width = displayWidth + 'px';
     element.style.height = displayHeight + 'px';
     element.style.left = Math.floor((viewport.width - displayWidth) / 2) + 'px';
@@ -305,6 +367,7 @@
 
   function markPlaybackStarted() {
     clearPlayConfirm();
+    clearRestartConfirm();
     waitingForAudio = false;
     lastVideoTime = Number(video.currentTime) || 0;
     lastProgressAt = new Date().getTime();
@@ -370,6 +433,29 @@
     return true;
   }
 
+  function setNativeLoop(enabled) {
+    nativeLoopEnabled = !!enabled;
+    try { video.loop = nativeLoopEnabled; } catch (error) {}
+    if (nativeLoopEnabled) {
+      video.setAttribute('loop', 'loop');
+    } else {
+      video.removeAttribute('loop');
+    }
+  }
+
+  function shouldNativeLoop() {
+    return !!(
+      !pendingPlaylist &&
+      playlist.length === 1 &&
+      playlist[0] &&
+      playlist[0].type === 'video'
+    );
+  }
+
+  function syncNativeLoop() {
+    setNativeLoop(shouldNativeLoop());
+  }
+
   function retryCurrent(detail) {
     var resumeAt;
     var item = playlist[index];
@@ -396,14 +482,54 @@
     showMessage('Recuperando reprodução', detail + '<br>Tentativa ' + retryCount + ' de 3.');
     try { video.pause(); } catch (error2) {}
     clearPlayConfirm();
+    clearRestartConfirm();
     clearRetryTimer();
     retryTimer = setTimeout(function () {
       retryTimer = null;
       video._resumeAt = resumeAt;
       video.src = item.url;
       try { video.load(); } catch (error3) {}
+      syncNativeLoop();
       playVideo();
     }, RETRY_DELAY_MS);
+  }
+
+  function restartSingleVideoFallback() {
+    var item = playlist[index];
+    var before;
+    if (!item || item.type !== 'video') {
+      advance();
+      return;
+    }
+
+    clearRestartConfirm();
+    try {
+      before = Number(video.currentTime) || 0;
+      video.currentTime = 0;
+      lastVideoTime = 0;
+      lastProgressAt = new Date().getTime();
+      playVideo();
+    } catch (error) {
+      before = -1;
+    }
+
+    restartConfirmTimer = setTimeout(function () {
+      var current;
+      restartConfirmTimer = null;
+      try { current = Number(video.currentTime) || 0; } catch (error2) { current = 0; }
+      if (current > 0.2 && !video.paused) { return; }
+
+      /*
+        Alguns WebKit antigos encerram o pipeline de mídia após ended e não
+        reiniciam apenas com currentTime = 0. Reabrir a mesma URL força o
+        decoder a iniciar um novo ciclo, preservando o mesmo elemento <video>.
+      */
+      video._resumeAt = 0;
+      video.src = item.url;
+      try { video.load(); } catch (error3) {}
+      syncNativeLoop();
+      playVideo();
+    }, RESTART_CONFIRM_MS);
   }
 
   function renderVideo(item) {
@@ -411,6 +537,7 @@
     clearImageTimer();
     stopImageAudio();
     clearPlayConfirm();
+    clearRestartConfirm();
     waitingForAudio = false;
     image.style.display = 'none';
     video.style.display = 'block';
@@ -421,19 +548,16 @@
     video._resumeAt = 0;
     video.src = item.url;
     fitElement(video, 16, 9);
+    syncNativeLoop();
     try { video.load(); } catch (error) {}
-
-    /*
-      Alguns WebKit antigos não carregam dados suficientes para disparar
-      loadeddata antes que play() seja chamado. Portanto a reprodução é
-      solicitada imediatamente, e os eventos servem apenas para confirmar.
-    */
     playVideo();
   }
 
   function renderImage(item) {
     var duration = Number(CONFIG.imageDurationSeconds) || 15;
     clearPlayConfirm();
+    clearRestartConfirm();
+    setNativeLoop(false);
     try { video.pause(); } catch (error) {}
     video.style.display = 'none';
     image.style.display = 'block';
@@ -472,6 +596,7 @@
     if (!playlist.length) {
       currentId = '';
       currentType = '';
+      setNativeLoop(false);
       video.style.display = 'none';
       image.style.display = 'none';
       showMessage('Nenhuma mídia publicada', 'O player continuará verificando a playlist.');
@@ -490,14 +615,11 @@
     }
 
     if (playlist.length === 1 && currentType === 'video') {
-      try {
-        video.currentTime = 0;
-        lastVideoTime = 0;
-        lastProgressAt = new Date().getTime();
-        playVideo();
-      } catch (error) {
-        retryCurrent('Falha ao reiniciar vídeo único.');
-      }
+      /*
+        Com loop nativo este evento normalmente não ocorre. Se ocorrer, o
+        navegador não completou o loop nativo e usamos um fallback controlado.
+      */
+      restartSingleVideoFallback();
       return;
     }
 
@@ -520,6 +642,14 @@
       if (revision !== playlistRevision) {
         playlistRevision = revision;
         pendingPlaylist = updated;
+
+        /*
+          Se um único vídeo está em loop nativo, desligamos o loop assim que
+          uma playlist nova é detectada. O vídeo atual termina normalmente e
+          onended aplica a atualização no limite de mídia.
+        */
+        if (nativeLoopEnabled) { setNativeLoop(false); }
+
         if (!currentId) {
           applyPendingPlaylist();
           advance();
@@ -554,7 +684,11 @@
     catch (error) { currentTime = 0; }
     now = new Date().getTime();
 
-    if (currentTime > lastVideoTime + 0.2) {
+    if (currentTime > lastVideoTime + 0.2 || currentTime < lastVideoTime - 1) {
+      /*
+        A segunda condição reconhece a volta do tempo para zero no loop nativo
+        como progresso válido, evitando um falso positivo do watchdog.
+      */
       lastVideoTime = currentTime;
       lastProgressAt = now;
       return;
@@ -573,8 +707,10 @@
     }
     requestJson(BOOTSTRAP.configUrl, function (remote) {
       merge(CONFIG, remote);
+      applyQueryOverrides();
       done();
     }, function () {
+      applyQueryOverrides();
       done();
     });
   }
@@ -603,7 +739,8 @@
   video.onplay = markPlaybackStarted;
   video.onplaying = markPlaybackStarted;
   video.ontimeupdate = function () {
-    if (Number(video.currentTime) > lastVideoTime + 0.1) {
+    var current = Number(video.currentTime) || 0;
+    if (current > lastVideoTime + 0.1 || current < lastVideoTime - 1) {
       markPlaybackStarted();
     }
   };
