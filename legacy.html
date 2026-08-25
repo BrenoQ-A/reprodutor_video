@@ -866,5 +866,80 @@
   });
 })();
 </script>
+<script>
+(function () {
+  'use strict';
+
+  /*
+    WebKit antigo pode chegar ao último frame sem reiniciar o loop nativo e
+    sem entregar `ended`. Este guardião observa somente o limite final e, após
+    duas confirmações consecutivas, reutiliza o `onended` já configurado pelo
+    player para avançar a playlist ou reiniciar o vídeo único.
+  */
+  var END_GUARD_INTERVAL_MS = 1000;
+  var END_GUARD_CONFIRMATIONS = 2;
+  var END_GUARD_MARGIN_SECONDS = 0.75;
+  var endGuardHits = 0;
+  var endGuardHandling = false;
+
+  function resetEndGuard() {
+    endGuardHits = 0;
+  }
+
+  function triggerEndBoundary(video) {
+    if (endGuardHandling) { return; }
+    endGuardHandling = true;
+    resetEndGuard();
+
+    try {
+      if (typeof video.onended === 'function') {
+        video.onended();
+      }
+    } catch (error) {}
+
+    setTimeout(function () {
+      endGuardHandling = false;
+    }, 5000);
+  }
+
+  function endBoundaryTick() {
+    var video = document.getElementById('video');
+    var duration;
+    var current;
+    var atEnd;
+
+    if (!video || video.style.display === 'none' || endGuardHandling) {
+      resetEndGuard();
+      return;
+    }
+
+    try {
+      duration = Number(video.duration) || 0;
+      current = Number(video.currentTime) || 0;
+    } catch (error) {
+      resetEndGuard();
+      return;
+    }
+
+    if (!duration || !isFinite(duration)) {
+      resetEndGuard();
+      return;
+    }
+
+    atEnd = !!video.ended || current >= Math.max(0, duration - END_GUARD_MARGIN_SECONDS);
+    if (!atEnd || (!video.paused && !video.ended)) {
+      resetEndGuard();
+      return;
+    }
+
+    endGuardHits += 1;
+    if (endGuardHits >= END_GUARD_CONFIRMATIONS) {
+      triggerEndBoundary(video);
+    }
+  }
+
+  setInterval(endBoundaryTick, END_GUARD_INTERVAL_MS);
+})();
+</script>
 </body>
 </html>
