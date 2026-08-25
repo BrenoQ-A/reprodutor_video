@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=1280, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Player Legacy - Staging</title>
+<style>
+  html, body { margin: 0; width: 100%; height: 100%; min-width: 1280px; min-height: 720px; background: #050505; color: #ededed; font-family: Arial, Helvetica, sans-serif; overflow: hidden; }
+  #status { position: absolute; left: 0; top: 45%; width: 100%; text-align: center; font-size: 16px; }
+  #detail { display: block; margin-top: 10px; color: #b8b8b4; font-size: 13px; }
+</style>
+</head>
+<body>
+<div id="status">Carregando player legado de staging<span id="detail">Produção permanece isolada.</span></div>
+<script>
+(function () {
+  var xhr = new XMLHttpRequest();
+  var url = '../legacy.html?t=' + new Date().getTime();
+  var status = document.getElementById('status');
+  xhr.open('GET', url, true);
+  xhr.timeout = 30000;
+  xhr.onreadystatechange = function () {
+    if (xhr.readyState !== 4) { return; }
+    if (xhr.status >= 200 && xhr.status < 300) {
+      document.open();
+      document.write(xhr.responseText);
+      document.close();
+      return;
+    }
+    status.innerHTML = 'Falha ao carregar o player legado de staging<span id="detail">HTTP ' + xhr.status + '</span>';
+  };
+  xhr.onerror = function () {
+    status.innerHTML = 'Falha ao carregar o player legado de staging<span id="detail">Erro de rede.</span>';
+  };
+  xhr.ontimeout = function () {
+    status.innerHTML = 'Falha ao carregar o player legado de staging<span id="detail">Tempo de carregamento esgotado.</span>';
+  };
+  xhr.send();
+})();
+</script>
+</body>
+</html>

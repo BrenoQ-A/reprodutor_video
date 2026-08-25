@@ -1,0 +1,6 @@
+{
+  "playlistUrl": "playlist.json",
+  "configUrl": "config.json",
+  "bootstrapRefreshMinutes": 30,
+  "playlistCheckSeconds": 15
+}
