@@ -1,0 +1,408 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Staging — Player de Sinalização</title>
+<style>
+  :root {
+    --bg: #090b10;
+    --panel: #121620;
+    --panel-2: #191f2b;
+    --line: #2a3242;
+    --text: #f2f4f7;
+    --dim: #9ca7b8;
+    --accent: #f0aa3c;
+    --ok: #6fd19a;
+    --danger: #ff7266;
+    --blue: #75a7ff;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 28px 18px 60px;
+    min-height: 100vh;
+    background: radial-gradient(circle at 10% 0%, rgba(117,167,255,.09), transparent 34rem), var(--bg);
+    color: var(--text);
+    font-family: Arial, Helvetica, sans-serif;
+  }
+  .wrap { max-width: 1120px; margin: 0 auto; }
+  header {
+    display: flex; align-items: flex-start; justify-content: space-between; gap: 18px;
+    border-bottom: 1px solid var(--line); padding-bottom: 18px; margin-bottom: 20px;
+  }
+  .eyebrow { color: var(--blue); font-size: 12px; letter-spacing: 1.8px; text-transform: uppercase; }
+  h1 { margin: 5px 0 7px; font-size: 30px; }
+  header p { margin: 0; color: var(--dim); max-width: 720px; line-height: 1.5; }
+  .badge {
+    border: 1px solid rgba(117,167,255,.4); color: var(--blue); border-radius: 999px;
+    padding: 8px 11px; font-size: 12px; white-space: nowrap;
+  }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  .card {
+    background: linear-gradient(180deg, var(--panel), #0f131b);
+    border: 1px solid var(--line); border-radius: 14px; padding: 18px; margin-bottom: 18px;
+  }
+  .card h2 { margin: 0 0 12px; color: var(--accent); font-size: 13px; text-transform: uppercase; letter-spacing: 1.2px; }
+  .muted { color: var(--dim); font-size: 13px; line-height: 1.5; }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  label { color: var(--dim); display: block; font-size: 12px; margin-bottom: 5px; }
+  input, select {
+    width: 100%; background: var(--panel-2); color: var(--text); border: 1px solid var(--line);
+    border-radius: 8px; padding: 10px; font: inherit;
+  }
+  button, a.button {
+    display: inline-block; text-decoration: none; background: transparent; color: var(--text);
+    border: 1px solid var(--line); border-radius: 8px; padding: 9px 12px; font: inherit;
+    font-size: 13px; font-weight: 700; cursor: pointer;
+  }
+  button.primary { background: var(--accent); color: #211500; border-color: var(--accent); }
+  button.blue, a.button.blue { border-color: var(--blue); color: var(--blue); }
+  button.danger { border-color: var(--danger); color: var(--danger); }
+  button:disabled { opacity: .45; cursor: default; }
+  .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+  .status {
+    margin-top: 12px; padding: 10px 11px; border-radius: 8px; border: 1px solid var(--line);
+    color: var(--dim); font-size: 12px; line-height: 1.45; min-height: 38px;
+  }
+  .status.ok { color: var(--ok); border-color: rgba(111,209,154,.35); }
+  .status.err { color: var(--danger); border-color: rgba(255,114,102,.35); }
+  ul { list-style: none; margin: 12px 0 0; padding: 0; }
+  li.media {
+    display: flex; align-items: center; gap: 10px; padding: 10px; margin-bottom: 8px;
+    border: 1px solid var(--line); border-radius: 9px; background: var(--panel-2);
+  }
+  .media .name { flex: 1; min-width: 0; word-break: break-word; font-size: 13px; }
+  .media .meta { color: var(--dim); font-size: 11px; margin-top: 3px; }
+  .media .controls { display: flex; gap: 5px; flex-shrink: 0; }
+  .media .controls button { padding: 6px 8px; font-size: 11px; }
+  .production-list { max-height: 410px; overflow: auto; padding-right: 4px; }
+  .check-line { display: flex; align-items: center; gap: 9px; }
+  .check-line input { width: auto; }
+  .urls { font-family: Consolas, monospace; font-size: 11px; color: var(--dim); word-break: break-all; }
+  #app { display: none; }
+  #login-card { max-width: 520px; margin: 52px auto; }
+  @media (max-width: 820px) {
+    .grid, .row { grid-template-columns: 1fr; }
+    header { flex-direction: column; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <div class="eyebrow">Ambiente isolado</div>
+      <h1>Painel de Staging</h1>
+      <p>Use este painel para testar playlists e parâmetros sem alterar a playlist de produção. A mídia física continua no R2, mas o staging mantém metadados próprios.</p>
+    </div>
+    <div class="badge">STAGING</div>
+  </header>
+
+  <section id="login-card" class="card">
+    <h2>Autenticação</h2>
+    <p class="muted">Use o mesmo GPID e senha do painel principal. Apenas administradores podem alterar o staging.</p>
+    <div class="row">
+      <div><label for="gpid">GPID</label><input id="gpid" autocomplete="username"></div>
+      <div><label for="password">Senha</label><input id="password" type="password" autocomplete="current-password"></div>
+    </div>
+    <div class="actions"><button class="primary" id="login">Entrar</button></div>
+    <div class="status" id="login-status">Aguardando login.</div>
+  </section>
+
+  <main id="app">
+    <section class="card">
+      <h2>Acesso rápido</h2>
+      <div class="actions">
+        <a class="button blue" target="_blank" href="./">Abrir player staging</a>
+        <a class="button blue" target="_blank" href="legacy.html">Abrir legacy staging</a>
+        <a class="button blue" target="_blank" href="legacy.html?fit=cover">Legacy cover</a>
+        <button id="logout">Sair</button>
+      </div>
+      <div class="status" id="state-status">Carregando staging...</div>
+      <p class="urls" id="state-urls"></p>
+    </section>
+
+    <div class="grid">
+      <section class="card">
+        <h2>Mídia disponível em produção</h2>
+        <p class="muted">Selecionar uma mídia aqui apenas cria uma referência na playlist de staging. O objeto de produção não é movido, renomeado ou excluído.</p>
+        <div class="actions">
+          <button class="primary" id="copy-selected">Adicionar selecionados ao staging</button>
+          <button id="sync-production">Espelhar playlist inteira</button>
+        </div>
+        <ul id="production-list" class="production-list"></ul>
+      </section>
+
+      <section class="card">
+        <h2>Playlist de staging</h2>
+        <p class="muted">A ordem abaixo é a ordem efetiva de reprodução no ambiente de testes.</p>
+        <div class="actions"><button class="danger" id="clear-staging">Limpar staging</button></div>
+        <ul id="staging-list"></ul>
+      </section>
+    </div>
+
+    <section class="card">
+      <h2>Configuração do staging</h2>
+      <div class="row">
+        <div>
+          <label for="fit-mode">Enquadramento legacy</label>
+          <select id="fit-mode">
+            <option value="cover">cover — preencher tela</option>
+            <option value="contain">contain — mostrar tudo</option>
+            <option value="stretch">stretch — preencher deformando</option>
+          </select>
+        </div>
+        <div><label for="volume">Volume padrão (0–1)</label><input id="volume" type="number" min="0" max="1" step="0.05"></div>
+      </div>
+      <div class="row">
+        <div><label for="canvas-width">Canvas legacy — largura</label><input id="canvas-width" type="number" min="320" max="7680"></div>
+        <div><label for="canvas-height">Canvas legacy — altura</label><input id="canvas-height" type="number" min="240" max="4320"></div>
+      </div>
+      <div class="row">
+        <div><label for="image-duration">Duração de imagem (s)</label><input id="image-duration" type="number" min="1" max="3600"></div>
+        <div><label for="auto-reload">Reload de manutenção (h)</label><input id="auto-reload" type="number" min="0" max="168"></div>
+      </div>
+      <div class="check-line"><input id="show-hud" type="checkbox"><label for="show-hud">Exibir HUD no player principal</label></div>
+      <div class="actions"><button class="primary" id="save-config">Salvar configuração de staging</button></div>
+      <div class="status" id="config-status">Nenhuma alteração pendente.</div>
+    </section>
+  </main>
+</div>
+
+<script>
+(function () {
+  'use strict';
+  var BACKEND = 'https://player-backend.ambitiouswave-c76e39f5.brazilsouth.azurecontainerapps.io';
+  var state = { media: [], productionMedia: [], config: {} };
+
+  function $(id) { return document.getElementById(id); }
+  function escapeHtml(value) {
+    return String(value == null ? '' : value)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+  function status(id, text, kind) {
+    var el = $(id);
+    el.className = 'status' + (kind ? ' ' + kind : '');
+    el.textContent = text;
+  }
+  function request(path, options) {
+    var opts = options || {};
+    opts.credentials = 'include';
+    opts.headers = opts.headers || {};
+    if (opts.body && typeof opts.body !== 'string') {
+      opts.headers['Content-Type'] = 'application/json';
+      opts.body = JSON.stringify(opts.body);
+    }
+    return fetch(BACKEND + path, opts).then(function (res) {
+      return res.text().then(function (text) {
+        var data = {};
+        try { data = text ? JSON.parse(text) : {}; } catch (error) {}
+        if (!res.ok) {
+          var err = new Error(data.error || ('HTTP ' + res.status));
+          err.status = res.status;
+          throw err;
+        }
+        return data;
+      });
+    });
+  }
+
+  function showLogin(message) {
+    $('login-card').style.display = 'block';
+    $('app').style.display = 'none';
+    if (message) { status('login-status', message, 'err'); }
+  }
+  function showApp() {
+    $('login-card').style.display = 'none';
+    $('app').style.display = 'block';
+  }
+
+  function renderProduction() {
+    var list = $('production-list');
+    list.innerHTML = '';
+    if (!state.productionMedia.length) {
+      list.innerHTML = '<li class="muted">Nenhuma mídia em produção.</li>';
+      return;
+    }
+    state.productionMedia.forEach(function (item) {
+      var li = document.createElement('li');
+      li.className = 'media';
+      li.innerHTML = '<input class="prod-check" type="checkbox" value="' + escapeHtml(item.id) + '">' +
+        '<div class="name"><strong>' + escapeHtml(item.name) + '</strong>' +
+        '<div class="meta">' + escapeHtml(item.type || 'video') + '</div></div>';
+      list.appendChild(li);
+    });
+  }
+
+  function postOrder() {
+    return request('/api/staging/media/reorder', {
+      method: 'POST',
+      body: { order: state.media.map(function (item) { return item.id; }) }
+    }).then(function (data) {
+      state.media = data.media || [];
+      renderStaging();
+      status('state-status', 'Ordem do staging atualizada.', 'ok');
+    });
+  }
+
+  function move(index, direction) {
+    var target = index + direction;
+    var temp;
+    if (target < 0 || target >= state.media.length) { return; }
+    temp = state.media[index];
+    state.media[index] = state.media[target];
+    state.media[target] = temp;
+    postOrder().catch(function (error) { status('state-status', error.message, 'err'); });
+  }
+
+  function removeItem(id) {
+    request('/api/staging/media/' + encodeURIComponent(id), { method: 'DELETE' })
+      .then(function (data) {
+        state.media = data.media || [];
+        renderStaging();
+        status('state-status', 'Mídia removida apenas do staging.', 'ok');
+      })
+      .catch(function (error) { status('state-status', error.message, 'err'); });
+  }
+
+  function renderStaging() {
+    var list = $('staging-list');
+    list.innerHTML = '';
+    if (!state.media.length) {
+      list.innerHTML = '<li class="muted">Playlist de staging vazia.</li>';
+      return;
+    }
+    state.media.forEach(function (item, index) {
+      var li = document.createElement('li');
+      var controls = document.createElement('div');
+      li.className = 'media';
+      li.innerHTML = '<div class="name"><strong>' + (index + 1) + '. ' + escapeHtml(item.name) + '</strong>' +
+        '<div class="meta">source: ' + escapeHtml(item.sourceId || '-') + '</div></div>';
+      controls.className = 'controls';
+      controls.innerHTML = '<button data-action="up">↑</button><button data-action="down">↓</button><button data-action="remove">Remover</button>';
+      controls.querySelector('[data-action="up"]').onclick = function () { move(index, -1); };
+      controls.querySelector('[data-action="down"]').onclick = function () { move(index, 1); };
+      controls.querySelector('[data-action="remove"]').onclick = function () { removeItem(item.id); };
+      li.appendChild(controls);
+      list.appendChild(li);
+    });
+  }
+
+  function fillConfig() {
+    var config = state.config || {};
+    $('fit-mode').value = config.legacyFitMode || 'cover';
+    $('volume').value = config.targetVolume == null ? 0.8 : config.targetVolume;
+    $('canvas-width').value = config.legacyCanvasWidth || 1280;
+    $('canvas-height').value = config.legacyCanvasHeight || 720;
+    $('image-duration').value = config.imageDurationSeconds || 15;
+    $('auto-reload').value = config.autoReloadHours == null ? 6 : config.autoReloadHours;
+    $('show-hud').checked = config.showHud !== false;
+  }
+
+  function loadState() {
+    status('state-status', 'Carregando estado do staging...');
+    return request('/api/staging/state').then(function (data) {
+      state.media = data.media || [];
+      state.productionMedia = data.productionMedia || [];
+      state.config = data.config || {};
+      renderProduction();
+      renderStaging();
+      fillConfig();
+      $('state-urls').textContent = 'Playlist: ' + (data.playlistUrl || '-') + '\nConfig: ' + (data.configUrl || '-');
+      showApp();
+      status('state-status', 'Staging conectado. Produção permanece separada.', 'ok');
+      return data;
+    }).catch(function (error) {
+      if (error.status === 401) { showLogin('Faça login para acessar o staging.'); return; }
+      if (error.status === 403) { showLogin('Sua conta não possui permissão de administrador para staging.'); return; }
+      showLogin(error.message);
+    });
+  }
+
+  $('login').onclick = function () {
+    status('login-status', 'Autenticando...');
+    request('/api/auth/login', {
+      method: 'POST',
+      body: { gpid: $('gpid').value, password: $('password').value }
+    }).then(function (data) {
+      if (!data.isAdmin) { throw new Error('Esta conta não é administradora.'); }
+      $('password').value = '';
+      status('login-status', 'Autenticado.', 'ok');
+      return loadState();
+    }).catch(function (error) { status('login-status', error.message, 'err'); });
+  };
+
+  $('logout').onclick = function () {
+    request('/api/auth/logout', { method: 'POST' }).finally(function () {
+      showLogin('Sessão encerrada.');
+    });
+  };
+
+  $('copy-selected').onclick = function () {
+    var ids = Array.prototype.slice.call(document.querySelectorAll('.prod-check:checked'))
+      .map(function (checkbox) { return checkbox.value; });
+    if (!ids.length) { status('state-status', 'Selecione ao menos uma mídia de produção.', 'err'); return; }
+    status('state-status', 'Copiando referências para o staging...');
+    request('/api/staging/media/copy', { method: 'POST', body: { ids: ids } })
+      .then(function (data) {
+        state.media = data.media || [];
+        renderStaging();
+        Array.prototype.forEach.call(document.querySelectorAll('.prod-check'), function (c) { c.checked = false; });
+        status('state-status', 'Mídias adicionadas ao staging sem alterar produção.', 'ok');
+      })
+      .catch(function (error) { status('state-status', error.message, 'err'); });
+  };
+
+  $('sync-production').onclick = function () {
+    if (!window.confirm('Substituir a playlist de staging por uma cópia da playlist atual de produção?')) { return; }
+    request('/api/staging/media/sync-production', { method: 'POST' })
+      .then(function (data) {
+        state.media = data.media || [];
+        renderStaging();
+        status('state-status', 'Staging espelhado a partir da produção. A produção não foi alterada.', 'ok');
+      })
+      .catch(function (error) { status('state-status', error.message, 'err'); });
+  };
+
+  $('clear-staging').onclick = function () {
+    if (!window.confirm('Limpar apenas a playlist de staging?')) { return; }
+    request('/api/staging/media/clear', { method: 'DELETE' })
+      .then(function (data) {
+        state.media = data.media || [];
+        renderStaging();
+        status('state-status', 'Playlist de staging limpa.', 'ok');
+      })
+      .catch(function (error) { status('state-status', error.message, 'err'); });
+  };
+
+  $('save-config').onclick = function () {
+    var next = {};
+    Object.keys(state.config || {}).forEach(function (key) { next[key] = state.config[key]; });
+    next.legacyFitMode = $('fit-mode').value;
+    next.targetVolume = Number($('volume').value);
+    next.legacyCanvasWidth = Number($('canvas-width').value);
+    next.legacyCanvasHeight = Number($('canvas-height').value);
+    next.imageDurationSeconds = Number($('image-duration').value);
+    next.autoReloadHours = Number($('auto-reload').value);
+    next.showHud = $('show-hud').checked;
+    status('config-status', 'Salvando configuração...');
+    request('/api/staging/config', { method: 'PUT', body: next })
+      .then(function (data) {
+        state.config = data.config || {};
+        fillConfig();
+        status('config-status', 'Configuração de staging salva no R2.', 'ok');
+      })
+      .catch(function (error) { status('config-status', error.message, 'err'); });
+  };
+
+  $('password').addEventListener('keydown', function (event) {
+    if (event.key === 'Enter') { $('login').click(); }
+  });
+
+  loadState();
+})();
+</script>
+</body>
+</html>
