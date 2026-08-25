@@ -46,6 +46,14 @@ function normalizeKey(pathname) {
   return key;
 }
 
+function encodeKeyForUrl(key) {
+  return String(key || '').split('/').map(encodeURIComponent).join('/');
+}
+
+function isPlaylistKey(key) {
+  return key === 'playlist.json' || key === 'playlist-staging.json';
+}
+
 function validRangeSyntax(value) {
   if (!value) { return true; }
   if (value.includes(',')) { return false; }
@@ -115,6 +123,29 @@ function simpleResponse(body, status, request, env, extraHeaders) {
   return new Response(body, { status, headers });
 }
 
+async function rewritePlaylistResponse(object, key, request, env) {
+  const text = await new Response(object.body).text();
+  const playlist = JSON.parse(text);
+  const items = playlist && Array.isArray(playlist.items) ? playlist.items : [];
+  const baseUrl = new URL(request.url);
+
+  items.forEach((item) => {
+    if (!item || !item.key) { return; }
+    const safeKey = normalizeKey('/' + item.key);
+    if (!safeKey) { return; }
+    item.url = new URL('/' + encodeKeyForUrl(safeKey), baseUrl).toString();
+  });
+
+  const body = JSON.stringify(playlist, null, 2) + '\n';
+  const headers = objectHeaders(object, key, request, env);
+  headers.delete('ETag');
+  headers.delete('Content-Range');
+  headers.set('Content-Type', 'application/json; charset=utf-8');
+  headers.set('Cache-Control', 'no-cache');
+  headers.set('Content-Length', String(new TextEncoder().encode(body).byteLength));
+  return new Response(body, { status: 200, headers });
+}
+
 async function handleObject(request, env) {
   if (!requestOriginAllowed(request, env)) {
     return simpleResponse('Origem não autorizada.', 403, request, env);
@@ -177,6 +208,10 @@ async function handleObject(request, env) {
     return simpleResponse('Não encontrado.', 404, request, env);
   }
 
+  if (!rangeHeader && isPlaylistKey(key)) {
+    return rewritePlaylistResponse(object, key, request, env);
+  }
+
   const headers = objectHeaders(object, key, request, env);
   const status = object.range ? 206 : 200;
   return new Response(object.body, { status, headers });
@@ -199,10 +234,13 @@ export {
   allowedOrigins,
   applyCors,
   defaultCacheControl,
+  encodeKeyForUrl,
   handleObject,
   inferContentType,
+  isPlaylistKey,
   normalizeKey,
   objectHeaders,
   requestOriginAllowed,
+  rewritePlaylistResponse,
   validRangeSyntax
 };
