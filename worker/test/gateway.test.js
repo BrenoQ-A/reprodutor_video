@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import worker, {
   inferContentType,
+  isPlaylistKey,
   normalizeKey,
   validRangeSyntax
 } from '../src/index.js';
@@ -11,7 +12,7 @@ function fakeObject(options = {}) {
   const bodyText = options.bodyText || 'abcdefghij';
   return {
     body: bodyText,
-    size: options.size ?? 10,
+    size: options.size ?? new TextEncoder().encode(bodyText).byteLength,
     range: options.range,
     httpEtag: '"etag-123"',
     uploaded: new Date('2026-08-25T12:00:00Z'),
@@ -32,8 +33,26 @@ function fakeEnv() {
       },
       async get(key, options) {
         if (key === 'missing.mp4') { return null; }
+        if (key === 'playlist-staging.json') {
+          const bodyText = JSON.stringify({
+            version: 1,
+            environment: 'staging',
+            items: [
+              {
+                id: 'staging-1',
+                key: 'media/video teste.mp4',
+                url: 'https://old-r2.example/media/video%20teste.mp4'
+              }
+            ]
+          });
+          return fakeObject({
+            bodyText,
+            contentType: 'application/json; charset=utf-8',
+            cacheControl: 'no-cache'
+          });
+        }
         if (options && options.range) {
-          return fakeObject({ bodyText: 'cdef', range: { offset: 2, length: 4 } });
+          return fakeObject({ bodyText: 'cdef', size: 10, range: { offset: 2, length: 4 } });
         }
         return fakeObject();
       }
@@ -46,6 +65,12 @@ test('normaliza chaves e rejeita travessia', () => {
   assert.equal(normalizeKey('/media%2Fvideo.mp4'), 'media/video.mp4');
   assert.equal(normalizeKey('/../video.mp4'), null);
   assert.equal(normalizeKey('/media//video.mp4'), null);
+});
+
+test('identifica somente playlists controladas pelo gateway', () => {
+  assert.equal(isPlaylistKey('playlist.json'), true);
+  assert.equal(isPlaylistKey('playlist-staging.json'), true);
+  assert.equal(isPlaylistKey('config-staging.json'), false);
 });
 
 test('valida ranges HTTP simples', () => {
@@ -74,6 +99,22 @@ test('GET completo retorna metadados para streaming', async () => {
   assert.equal(response.headers.get('Content-Length'), '10');
   assert.equal(response.headers.get('ETag'), '"etag-123"');
   assert.equal(response.headers.get('Access-Control-Allow-Origin'), 'https://brenoq-a.github.io');
+});
+
+test('playlist de staging reescreve URLs para o próprio gateway', async () => {
+  const request = new Request('https://gateway.example/playlist-staging.json', {
+    headers: { Origin: 'https://brenoq-a.github.io' }
+  });
+  const response = await worker.fetch(request, fakeEnv());
+  const playlist = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('Cache-Control'), 'no-cache');
+  assert.equal(response.headers.get('ETag'), null);
+  assert.equal(
+    playlist.items[0].url,
+    'https://gateway.example/media/video%20teste.mp4'
+  );
 });
 
 test('GET com Range retorna 206 e Content-Range', async () => {
