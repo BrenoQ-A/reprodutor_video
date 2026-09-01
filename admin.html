@@ -638,7 +638,185 @@
     #login-card::after, #reset-card::after { display: none; }
   }
 
+  /* PepsiCo brand palette — sampled from the supplied corporate logo */
+  :root {
+    --bg: #eef3f8;
+    --panel: #ffffff;
+    --panel-2: #f5f8fc;
+    --panel-3: #e7eef6;
+    --line: #cad7e4;
+    --line-soft: rgba(1, 45, 89, .11);
+    --text: #012d59;
+    --text-dim: #5a7087;
+    --accent: #fca209;
+    --accent-strong: #ffb52e;
+    --accent-soft: rgba(252, 162, 9, .13);
+    --brand-blue: #012d59;
+    --brand-sky: #5b96c4;
+    --brand-green: #4ca008;
+    --brand-orange: #fca209;
+    --danger: #c53b36;
+    --danger-soft: rgba(197, 59, 54, .09);
+    --ok: #4ca008;
+    --ok-soft: rgba(76, 160, 8, .1);
+    --shadow: 0 18px 48px rgba(1, 45, 89, .1);
+  }
+  body {
+    background:
+      radial-gradient(circle at 4% -8%, rgba(91,150,196,.22), transparent 34rem),
+      radial-gradient(circle at 96% 4%, rgba(252,162,9,.15), transparent 30rem),
+      linear-gradient(145deg, #f8fbfe 0%, #eef4f9 48%, #f7fafc 100%);
+  }
+  body::before {
+    opacity: .32;
+    background-image:
+      linear-gradient(rgba(1,45,89,.035) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(1,45,89,.035) 1px, transparent 1px);
+  }
+
+  header.top {
+    color: #fff; border-color: rgba(255,255,255,.12);
+    background:
+      radial-gradient(circle at 88% 0%, rgba(91,150,196,.42), transparent 22rem),
+      linear-gradient(120deg, #012d59 0%, #073b70 62%, #0a477c 100%);
+    box-shadow: 0 22px 65px rgba(1,45,89,.2);
+  }
+  header.top::after { background: rgba(252,162,9,.32); }
+  header.top .eyebrow { color: #ffc461; }
+  header.top h1 { color: #fff; }
+  header.top p { color: #d7e5f1; }
+  .brand-mark {
+    color: #fff; border-color: rgba(255,255,255,.34);
+    background: linear-gradient(145deg, #fca209 0 43%, #5b96c4 43% 72%, #4ca008 72% 100%);
+    box-shadow: inset 0 1px rgba(255,255,255,.28), 0 12px 30px rgba(0,0,0,.18);
+    text-shadow: 0 1px 4px rgba(0,0,0,.24);
+  }
+  .connection-pill { color: #d7e5f1; border-color: rgba(255,255,255,.22); background: rgba(0,0,0,.14); }
+  .connection-pill.online { color: #d9ffbd; border-color: rgba(217,255,189,.42); }
+  #who { color: #d7e5f1; }
+
+  .dashboard-nav {
+    border-color: rgba(1,45,89,.11); background: rgba(255,255,255,.9);
+    box-shadow: 0 14px 36px rgba(1,45,89,.12);
+  }
+  .dashboard-nav a { color: #5a7087; }
+  .dashboard-nav a::before { color: #5b96c4; opacity: 1; }
+  .dashboard-nav a:hover {
+    color: #012d59; border-color: rgba(91,150,196,.35); background: rgba(91,150,196,.1);
+  }
+  .dashboard-nav a:first-child { color: #012d59; background: rgba(91,150,196,.14); }
+  .dashboard-nav a:first-child::before { color: #fca209; }
+
+  section.card {
+    background:
+      linear-gradient(150deg, rgba(91,150,196,.035), transparent 30%),
+      #fff;
+    border-color: rgba(1,45,89,.1);
+    box-shadow: 0 18px 48px rgba(1,45,89,.085), inset 0 1px rgba(255,255,255,.8);
+  }
+  #main-area > section.card:hover,
+  #main-area .card-grid > section.card:hover {
+    border-color: rgba(91,150,196,.4);
+    box-shadow: 0 22px 58px rgba(1,45,89,.13), inset 0 1px #fff;
+  }
+  section.card h2 { color: #012d59; }
+  section.card h2::before { background: linear-gradient(90deg, #fca209 0 48%, #5b96c4 48%); }
+
+  #device-selection {
+    background:
+      radial-gradient(circle at 94% 0%, rgba(252,162,9,.16), transparent 27rem),
+      radial-gradient(circle at 0% 100%, rgba(91,150,196,.12), transparent 24rem),
+      #fff;
+  }
+  .device-card {
+    color: #012d59; border-color: rgba(1,45,89,.12);
+    background: linear-gradient(145deg, #fff, #f2f7fb);
+    box-shadow: inset 0 1px #fff, 0 10px 26px rgba(1,45,89,.06);
+  }
+  .device-card::before {
+    color: #012d59; border-color: rgba(1,45,89,.16); background: rgba(91,150,196,.1);
+  }
+  .device-card.global {
+    background: linear-gradient(145deg, rgba(252,162,9,.13), #fff 72%);
+    border-color: rgba(252,162,9,.3);
+  }
+  .device-card.global::before { color: #012d59; border-color: rgba(252,162,9,.48); background: rgba(252,162,9,.13); }
+  .device-card::after { background: rgba(91,150,196,.1); }
+  .device-card.global::after { background: rgba(252,162,9,.13); }
+  .device-card:hover { border-color: #5b96c4; box-shadow: 0 18px 38px rgba(1,45,89,.14); }
+  .device-card-copy { color: #5a7087; }
+  .device-mode { color: #4ca008; }
+
+  .active-device-bar {
+    border-color: rgba(91,150,196,.38);
+    background: linear-gradient(120deg, rgba(91,150,196,.17), rgba(255,255,255,.88));
+    box-shadow: inset 4px 0 #012d59, 0 13px 32px rgba(1,45,89,.08);
+  }
+  .active-device-bar span { color: #5a7087; }
+
+  .stat-card {
+    border-color: rgba(1,45,89,.1); background: linear-gradient(145deg, #fff, #f4f8fc);
+    box-shadow: 0 13px 32px rgba(1,45,89,.07), inset 0 1px #fff;
+  }
+  .stat-card::before { content: ""; position: absolute; inset: 0 0 auto; height: 4px; }
+  .stat-card:nth-child(1)::before { background: #fca209; }
+  .stat-card:nth-child(2)::before { background: #5b96c4; }
+  .stat-card:nth-child(3)::before { background: #012d59; }
+  .stat-card:nth-child(4)::before { background: #4ca008; }
+  .stat-card::after { color: rgba(1,45,89,.09); }
+  .stat-card:hover { border-color: rgba(91,150,196,.42); }
+
+  label, .card-copy, .processing-progress-detail, .picked-file { color: #5a7087; }
+  input[type=text], input[type=password], input[type=number], input[type=url], select, textarea {
+    color: #012d59; background: #f8fbfe; border-color: rgba(1,45,89,.16);
+  }
+  input:hover, select:hover, textarea:hover { border-color: rgba(91,150,196,.62); }
+  input:focus, select:focus, textarea:focus {
+    background: #fff; border-color: #5b96c4; box-shadow: 0 0 0 3px rgba(91,150,196,.16);
+  }
+  button.primary { color: #fff; background: linear-gradient(135deg, #012d59, #0b4d84); box-shadow: 0 10px 25px rgba(1,45,89,.18); }
+  button.primary:hover { box-shadow: 0 12px 29px rgba(1,45,89,.25); }
+  button.ghost { color: #012d59; border-color: rgba(1,45,89,.25); background: rgba(255,255,255,.7); }
+  button.ghost:hover { color: #012d59; border-color: #5b96c4; background: rgba(91,150,196,.09); }
+  button.link { color: #012d59; }
+
+  ul#media-list li, ul#music-list li, .youtube-import, .device-media-option {
+    color: #012d59; background: #f6f9fc; border-color: rgba(1,45,89,.1);
+  }
+  ul#media-list li:hover { border-color: rgba(91,150,196,.5); }
+  ul#media-list li .type-tag { color: #5a7087; border-color: rgba(1,45,89,.16); }
+  ul#music-list li .source-tag { color: #012d59; border-color: rgba(91,150,196,.44); background: rgba(91,150,196,.09); }
+  .upload-drop { color: #5a7087; border-color: rgba(91,150,196,.55); background: rgba(91,150,196,.055); }
+  .upload-drop:hover, .upload-drop.drag-over { color: #012d59; border-color: #5b96c4; background: rgba(91,150,196,.12); }
+  .processing-progress, #status-line, #reset-status, #admin-reset-status, #media-status,
+  #config-status, #generate-status, #music-status, #video-upload-status, #device-status, #device-playlist-status {
+    background: #f6f9fc; border-color: rgba(1,45,89,.1); color: #5a7087;
+  }
+  .processing-progress-track { background: #dbe6f0; }
+  .processing-progress-fill { background: linear-gradient(90deg, #5b96c4, #012d59); }
+
+  .vpn-warning { border-color: rgba(252,162,9,.45); background: rgba(252,162,9,.11); }
+  .vpn-warning-title, .vpn-warning code { color: #9c5e00; }
+  .vpn-warning p { color: #012d59; }
+  .vpn-warning p + p { color: #5a7087; }
+  .vpn-warning-icon { color: #fff; background: #fca209; }
+  .vpn-modal { background: rgba(1,28,54,.72); }
+  .vpn-modal-panel { background: #fff; border-color: rgba(252,162,9,.55); box-shadow: 0 26px 80px rgba(1,45,89,.28); }
+  .vpn-modal h2 { color: #012d59; }
+  .vpn-modal-copy { color: #5a7087; }
+
+  #login-card, #reset-card {
+    background:
+      radial-gradient(circle at 100% 0%, rgba(91,150,196,.16), transparent 23rem),
+      #fff;
+    border-top: 5px solid transparent;
+    border-image: linear-gradient(90deg, #fca209 0 34%, #5b96c4 34% 68%, #4ca008 68%) 1;
+  }
+  #login-card::after, #reset-card::after { color: rgba(1,45,89,.28); }
+  .footer-note { color: #5a7087; }
+  .footer-note a { color: #012d59; }
 </style>
+
 </head>
 <body>
 <div class="wrap">
