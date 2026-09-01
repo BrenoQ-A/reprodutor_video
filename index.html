@@ -108,6 +108,7 @@
   */
   var BOOTSTRAP = {
     playlistUrl: '',
+    devicesUrl: '',
     configUrl: '',
     bootstrapRefreshMinutes: 30,
     playlistCheckSeconds: 5
@@ -149,6 +150,9 @@
   var currentVideoRetryCount = 0;
   var pendingResumeTime = 0;
   var maintenanceReloadDue = false;
+  var deviceId = queryParam('device');
+  var activePlaylistUrls = [];
+  var activePlaylistMode = 'global';
 
   var VIDEO_STALL_TIMEOUT_MS = 20000;
   var VIDEO_RETRY_DELAY_MS = 2000;
@@ -168,6 +172,119 @@
       if (array[i] === value) { return true; }
     }
     return false;
+  }
+
+  function queryParam(name) {
+    var query = String(window.location.search || '').replace(/^\?/, '').split('&');
+    var i;
+    var pair;
+    for (i = 0; i < query.length; i++) {
+      pair = query[i].split('=');
+      if (decodeURIComponent(pair[0] || '') === name) {
+        return decodeURIComponent(String(pair.slice(1).join('=') || '').replace(/\+/g, ' '));
+      }
+    }
+    return '';
+  }
+
+  function siblingUrl(url, path) {
+    var clean = String(url || '').split('?')[0];
+    return clean.replace(/[^/]*$/, path);
+  }
+
+  function applyDeviceRegistry(registry) {
+    var i;
+    var found;
+    for (i = 0; registry && registry.devices && i < registry.devices.length; i++) {
+      if (String(registry.devices[i].id) === deviceId) { found = registry.devices[i]; break; }
+    }
+    if (!found) { return false; }
+    activePlaylistMode = found.playlistMode || 'global';
+    if (activePlaylistMode === 'individual') {
+      activePlaylistUrls = [siblingUrl(BOOTSTRAP.devicesUrl, 'devices/' + deviceId + '/playlist.json')];
+    } else if (activePlaylistMode === 'mixed') {
+      activePlaylistUrls = [
+        BOOTSTRAP.playlistUrl,
+        siblingUrl(BOOTSTRAP.devicesUrl, 'devices/' + deviceId + '/playlist.json')
+      ];
+    } else {
+      activePlaylistUrls = [BOOTSTRAP.playlistUrl];
+    }
+    return true;
+  }
+
+  function resolveDevice(done) {
+    if (!deviceId) {
+      activePlaylistUrls = [BOOTSTRAP.playlistUrl];
+      done();
+      return;
+    }
+    if (!BOOTSTRAP.devicesUrl) {
+      showMessage('Cadastro de TVs indisponível', 'Preencha <code>devicesUrl</code> em <code>player-config.json</code>.');
+      return;
+    }
+    requestJson(BOOTSTRAP.devicesUrl, function (registry) {
+      if (!applyDeviceRegistry(registry)) {
+        showMessage('TV não cadastrada', 'O identificador <code>' + deviceId + '</code> não existe no painel.');
+        return;
+      }
+      done();
+    }, function (error) {
+      showMessage('Falha ao identificar a TV', error);
+    });
+  }
+
+  function requestActivePlaylist(onSuccess, onError) {
+    function requestSources() {
+      var pending = activePlaylistUrls.length;
+      var results = [];
+      var failed = false;
+      var i;
+      if (!pending) { onError('Nenhuma playlist foi configurada.'); return; }
+      function finish() {
+      var combined = [];
+      var seen = {};
+      var revisions = [];
+      var x;
+      var y;
+      var source;
+      var item;
+      var signature;
+      for (x = 0; x < results.length; x++) {
+        source = results[x] && results[x].items ? results[x].items : results[x];
+        revisions.push(results[x] && results[x].updatedAt ? results[x].updatedAt : '');
+        for (y = 0; source && y < source.length; y++) {
+          item = source[y];
+          signature = String(item && (item.id || item.key || item.url || item.name));
+          if (!seen[signature]) { seen[signature] = true; combined.push(item); }
+        }
+      }
+        onSuccess({ items: combined, updatedAt: activePlaylistMode + '|' + revisions.join('|') });
+      }
+      for (i = 0; i < activePlaylistUrls.length; i++) {
+        (function (position) {
+          requestJson(activePlaylistUrls[position], function (data) {
+            results[position] = data || { items: [] };
+            pending -= 1;
+            if (!pending && !failed) { finish(); }
+          }, function (error) {
+            if (failed) { return; }
+            failed = true;
+            onError(error);
+          });
+        })(i);
+      }
+    }
+    if (deviceId && BOOTSTRAP.devicesUrl) {
+      requestJson(BOOTSTRAP.devicesUrl, function (registry) {
+        if (!applyDeviceRegistry(registry)) { onError('A TV não está mais cadastrada.'); return; }
+        requestSources();
+      }, function () {
+        requestSources();
+      });
+    } else {
+      requestSources();
+    }
   }
 
   function extOf(name) {
@@ -244,7 +361,7 @@
     updateNotice = reloadAfterCurrent
       ? '  ↻ NOVO CONTEÚDO'
       : (maintenanceReloadDue ? '  ↻ MANUTENÇÃO PENDENTE' : '');
-    hud.innerHTML = position + updateNotice + '  ' +
+    hud.innerHTML = (deviceId ? deviceId + '  ' : '') + position + updateNotice + '  ' +
       pad2(now.getHours()) + ':' + pad2(now.getMinutes());
   }
 
@@ -659,7 +776,7 @@
       return;
     }
 
-    if (!BOOTSTRAP.playlistUrl || !playlistRevision) {
+    if (!activePlaylistUrls.length || !playlistRevision) {
       if (playlist.length === 1 && playlist[0].type === 'video') {
         restartSingleVideo();
       } else {
@@ -672,7 +789,7 @@
       clearTimeout(refreshTimer);
       refreshTimer = null;
     }
-    requestJson(BOOTSTRAP.playlistUrl, function (data) {
+    requestActivePlaylist(function (data) {
       var updated = normalizePlaylist(data);
       var updatedRevision = revisionOf(data, updated);
       if (updatedRevision !== playlistRevision) {
@@ -896,7 +1013,7 @@
       return;
     }
 
-    requestJson(BOOTSTRAP.playlistUrl, function (data) {
+    requestActivePlaylist(function (data) {
       var updated = normalizePlaylist(data);
       var updatedRevision = revisionOf(data, updated);
       var i;
@@ -989,14 +1106,16 @@
     } else {
       window.onresize = refitCurrentMedia;
     }
-    loadRuntimeConfig(function () {
-      refreshPlaylist();
-      if (CONFIG.autoReloadHours > 0) {
-        setTimeout(function () {
-          maintenanceReloadDue = true;
-          updateHud();
-        }, CONFIG.autoReloadHours * 60 * 60 * 1000);
-      }
+    resolveDevice(function () {
+      loadRuntimeConfig(function () {
+        refreshPlaylist();
+        if (CONFIG.autoReloadHours > 0) {
+          setTimeout(function () {
+            maintenanceReloadDue = true;
+            updateHud();
+          }, CONFIG.autoReloadHours * 60 * 60 * 1000);
+        }
+      });
     });
   }
 

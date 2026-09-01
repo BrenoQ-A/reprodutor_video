@@ -87,6 +87,7 @@
 
   var BOOTSTRAP = {
     playlistUrl: '',
+    devicesUrl: '',
     configUrl: '',
     playlistCheckSeconds: 60
   };
@@ -145,6 +146,9 @@
   var lastRecoveryAt = 0;
   var reloadScheduled = false;
   var reloadTimer = null;
+  var deviceId = queryValue('device');
+  var activePlaylistUrls = [];
+  var activePlaylistMode = 'global';
 
   function contains(array, value) {
     var i;
@@ -214,6 +218,103 @@
     xhr.onerror = function () { onError('Falha de rede.'); };
     xhr.ontimeout = function () { onError('Tempo de rede esgotado.'); };
     xhr.send();
+  }
+
+  function siblingUrl(url, path) {
+    return String(url || '').split('?')[0].replace(/[^/]*$/, path);
+  }
+
+  function applyDeviceRegistry(registry) {
+    var found;
+    var i;
+    for (i = 0; registry && registry.devices && i < registry.devices.length; i++) {
+      if (String(registry.devices[i].id) === deviceId) { found = registry.devices[i]; break; }
+    }
+    if (!found) { return false; }
+    activePlaylistMode = found.playlistMode || 'global';
+    if (activePlaylistMode === 'individual') {
+      activePlaylistUrls = [siblingUrl(BOOTSTRAP.devicesUrl, 'devices/' + deviceId + '/playlist.json')];
+    } else if (activePlaylistMode === 'mixed') {
+      activePlaylistUrls = [
+        BOOTSTRAP.playlistUrl,
+        siblingUrl(BOOTSTRAP.devicesUrl, 'devices/' + deviceId + '/playlist.json')
+      ];
+    } else {
+      activePlaylistUrls = [BOOTSTRAP.playlistUrl];
+    }
+    return true;
+  }
+
+  function resolveDevice(done) {
+    if (!deviceId) {
+      activePlaylistUrls = [BOOTSTRAP.playlistUrl];
+      done();
+      return;
+    }
+    if (!BOOTSTRAP.devicesUrl) {
+      showMessage('Cadastro de TVs indisponível', 'O endereço do cadastro de TVs não foi configurado.');
+      return;
+    }
+    requestJson(BOOTSTRAP.devicesUrl, function (registry) {
+      if (!applyDeviceRegistry(registry)) {
+        showMessage('TV não cadastrada', 'O identificador desta TV não existe no painel.');
+        return;
+      }
+      done();
+    }, function () {
+      showMessage('Aguardando rede', 'Não foi possível identificar esta TV.');
+    });
+  }
+
+  function requestActivePlaylist(onSuccess, onError) {
+    function requestSources() {
+      var pending = activePlaylistUrls.length;
+      var results = [];
+      var failed = false;
+      var i;
+      if (!pending) { onError(); return; }
+      function finish() {
+        var items = [];
+        var seen = {};
+        var revisions = [];
+        var source;
+        var item;
+        var signature;
+        var x;
+        var y;
+        for (x = 0; x < results.length; x++) {
+          source = results[x] && results[x].items ? results[x].items : results[x];
+          revisions.push(results[x] && results[x].updatedAt ? results[x].updatedAt : '');
+          for (y = 0; source && y < source.length; y++) {
+            item = source[y];
+            signature = String(item && (item.id || item.key || item.url || item.name));
+            if (!seen[signature]) { seen[signature] = true; items.push(item); }
+          }
+        }
+        onSuccess({ items: items, updatedAt: activePlaylistMode + '|' + revisions.join('|') });
+      }
+      for (i = 0; i < activePlaylistUrls.length; i++) {
+        (function (position) {
+          requestJson(activePlaylistUrls[position], function (data) {
+            results[position] = data || { items: [] };
+            pending -= 1;
+            if (!pending && !failed) { finish(); }
+          }, function () {
+            if (failed) { return; }
+            failed = true;
+            onError();
+          });
+        })(i);
+      }
+    }
+    if (deviceId && BOOTSTRAP.devicesUrl) {
+      requestJson(BOOTSTRAP.devicesUrl, function (registry) {
+        if (!applyDeviceRegistry(registry)) { onError(); return; }
+        requestSources();
+      }, requestSources);
+    } else {
+      requestSources();
+    }
   }
 
   function showMessage(title, text) {
@@ -713,7 +814,7 @@
 
   function refreshPlaylist() {
     if (!BOOTSTRAP.playlistUrl) { return; }
-    requestJson(BOOTSTRAP.playlistUrl, function (data) {
+    requestActivePlaylist(function (data) {
       var updated = normalizePlaylist(data);
       var revision = revisionOf(data, updated);
 
@@ -857,9 +958,11 @@
     if (Number(BOOTSTRAP.playlistCheckSeconds) < 60) {
       BOOTSTRAP.playlistCheckSeconds = 60;
     }
-    loadRuntimeConfig(function () {
-      refreshPlaylist();
-      startPlaylistPolling();
+    resolveDevice(function () {
+      loadRuntimeConfig(function () {
+        refreshPlaylist();
+        startPlaylistPolling();
+      });
     });
   }, function () {
     showMessage('Configuração não encontrada', 'Não foi possível carregar player-config.json.');
