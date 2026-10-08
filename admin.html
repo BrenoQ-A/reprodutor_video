@@ -815,6 +815,15 @@
   #login-card::after, #reset-card::after { color: rgba(1,45,89,.28); }
   .footer-note { color: #5a7087; }
   .footer-note a { color: #012d59; }
+
+  .device-player-url{position:relative;z-index:2;margin-top:14px;padding-top:13px;border-top:1px solid var(--line-soft)}
+  .device-player-url input{width:100%;min-height:36px;padding:7px 9px;font:11px Consolas,Menlo,monospace}
+  .device-player-url-actions{display:flex;flex-wrap:wrap;gap:7px;margin-top:8px}
+  .device-player-url-actions button{flex:1;min-width:96px}
+  .saved-device-url-box{margin:16px 0;padding:15px;border:1px solid rgba(76,160,8,.28);border-radius:12px;background:var(--ok-soft)}
+  .saved-device-url-row{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:8px;align-items:center}
+  .saved-device-url-row input{font:12px Consolas,Menlo,monospace}
+  @media(max-width:620px){.saved-device-url-row{grid-template-columns:1fr}.saved-device-url-row button{width:100%}}
 </style>
 
 </head>
@@ -913,6 +922,14 @@
         <div class="device-actions">
           <button class="primary" id="btn-save-device" type="button">Salvar TV</button>
           <button class="ghost" id="btn-cancel-device" type="button">Cancelar</button>
+        </div>
+        <div id="saved-device-url-box" class="saved-device-url-box" hidden>
+          <label for="saved-device-url">URL de exibição da TV</label>
+          <div class="saved-device-url-row">
+            <input type="text" id="saved-device-url" readonly>
+            <button class="ghost small" id="btn-copy-saved-device-url" type="button">Copiar URL</button>
+            <button class="primary small" id="btn-open-saved-device-url" type="button">Abrir player</button>
+          </div>
         </div>
         <span id="device-status" role="status" aria-live="polite"></span>
       </div>
@@ -1229,6 +1246,13 @@
   var BACKEND_URL = (window.ADMIN_CONFIG && window.ADMIN_CONFIG.backendUrl) ||
     'http://localhost:3000';
   BACKEND_URL = BACKEND_URL.replace(/\/+$/, '');
+  var PLAYER_URL = ((window.ADMIN_CONFIG && window.ADMIN_CONFIG.playerUrl) ||
+    'https://brenoq-a.github.io/reprodutor_video/plsz.html').replace(/[?#].*$/, '');
+  function normalizeDeviceId(value){return String(value||'').toLowerCase().trim().replace(/[^a-z0-9_-]+/g,'-').replace(/-+/g,'-').replace(/^-+|-+$/g,'');}
+  function buildDeviceUrl(deviceId){return PLAYER_URL+'?device='+encodeURIComponent(String(deviceId||''));}
+  function fallbackCopy(value,done){var f=document.createElement('textarea');f.value=value;f.style.position='fixed';f.style.left='-9999px';document.body.appendChild(f);f.select();try{document.execCommand('copy');if(done){done();}}catch(e){}document.body.removeChild(f);}
+  function copyText(value,done){if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(value).then(done,function(){fallbackCopy(value,done);});}else{fallbackCopy(value,done);}}
+  function showSavedDeviceUrl(deviceId){$('saved-device-url').value=buildDeviceUrl(deviceId);$('saved-device-url-box').hidden=false;}
 
   var mode = 'login'; // 'login' | 'register'
   var media = [];
@@ -1432,7 +1456,19 @@
         actions.appendChild(edit); actions.appendChild(remove);
       }
       meta.appendChild(mode);
-      card.appendChild(title); card.appendChild(copy); card.appendChild(meta); card.appendChild(actions);
+      var urlBox=document.createElement('div');
+      var urlInput=document.createElement('input');
+      var urlActions=document.createElement('div');
+      var copyUrl=document.createElement('button');
+      var openUrl=document.createElement('button');
+      var deviceUrl=buildDeviceUrl(device.id);
+      urlBox.className='device-player-url';urlInput.type='text';urlInput.readOnly=true;urlInput.value=deviceUrl;urlActions.className='device-player-url-actions';
+      copyUrl.type='button';copyUrl.className='ghost small';copyUrl.textContent='Copiar URL';
+      copyUrl.addEventListener('click',function(){copyText(deviceUrl,function(){setStatus($('device-status'),'URL de '+device.name+' copiada.','ok');});});
+      openUrl.type='button';openUrl.className='primary small';openUrl.textContent='Abrir player';
+      openUrl.addEventListener('click',function(){window.open(deviceUrl,'_blank','noopener');});
+      urlActions.appendChild(copyUrl);urlActions.appendChild(openUrl);urlBox.appendChild(urlInput);urlBox.appendChild(urlActions);
+      card.appendChild(title);card.appendChild(copy);card.appendChild(meta);card.appendChild(urlBox);card.appendChild(actions);
       grid.appendChild(card);
     });
   }
@@ -1483,11 +1519,16 @@
     $('device-mode').value = device ? (device.playlistMode || 'global') : 'global';
     $('device-form').hidden = false;
     setStatus($('device-status'), '', '');
+    if(device){showSavedDeviceUrl(device.id);}else{$('saved-device-url-box').hidden=true;}
     $('device-name').focus();
   }
   $('btn-new-device').addEventListener('click', function () { openDeviceForm(null); });
   $('btn-cancel-device').addEventListener('click', function () { $('device-form').hidden = true; });
+  $('device-id').addEventListener('blur',function(){if(!$('device-id').disabled){$('device-id').value=normalizeDeviceId($('device-id').value);}if($('device-id').value){showSavedDeviceUrl($('device-id').value);}});
+  $('btn-copy-saved-device-url').addEventListener('click',function(){copyText($('saved-device-url').value,function(){setStatus($('device-status'),'URL copiada para a área de transferência.','ok');});});
+  $('btn-open-saved-device-url').addEventListener('click',function(){window.open($('saved-device-url').value,'_blank','noopener');});
   $('btn-save-device').addEventListener('click', function () {
+    $('device-id').value=normalizeDeviceId($('device-id').value);
     var body = {
       id: $('device-id').value,
       name: $('device-name').value,
@@ -1504,8 +1545,8 @@
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body)
     }).then(function () {
-      $('device-form').hidden = true;
-      setStatus($('device-status'), 'TV salva com sucesso.', 'ok');
+      showSavedDeviceUrl(body.id);
+      setStatus($('device-status'), 'TV salva com sucesso. A URL de exibição está disponível abaixo.', 'ok');
       return loadDevices();
     }).catch(function (err) {
       setStatus($('device-status'), err.message, 'err');
