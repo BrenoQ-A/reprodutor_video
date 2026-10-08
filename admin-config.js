@@ -1,4 +1,7 @@
 window.ADMIN_CONFIG = {
-  // URL pública do backend, sem barra no final.
-  backendUrl: 'https://player-backend.ambitiouswave-c76e39f5.brazilsouth.azurecontainerapps.io'
+  // Backend
+  backendUrl: 'https://player-backend.ambitiouswave-c76e39f5.brazilsouth.azurecontainerapps.io',
+
+  // Player que será aberto nas TVs
+  playerUrl: 'https://brenoq-a.github.io/reprodutor_video/plsz.html'
 };
