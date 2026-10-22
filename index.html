@@ -1089,11 +1089,14 @@
   function schedulePlaylistRefresh(delayMs) {
     if (refreshTimer) { clearTimeout(refreshTimer); }
     refreshTimer = null;
-    if (
-      delayMs === undefined &&
-      currentMediaElement &&
-      !(playlist.length === 1 && playlist[0] && playlist[0].type === 'video')
-    ) { return; }
+    /*
+      Enquanto houver mídia em reprodução, a playlist é consultada apenas
+      entre uma mídia e outra (finishCurrent), inclusive quando um único
+      vídeo está em loop. Isso evita trabalho de rede durante a reprodução
+      e mantém a troca de conteúdo confinada ao limite entre mídias.
+      Um delayMs explícito (retentativas após falha) sempre é agendado.
+    */
+    if (delayMs === undefined && currentMediaElement) { return; }
     refreshTimer = setTimeout(
       refreshPlaylist,
       delayMs || Math.max(2, Number(BOOTSTRAP.playlistCheckSeconds) || 5) * 1000
