@@ -166,6 +166,21 @@
   var progressBar = document.getElementById('progress-bar');
   var hud = document.getElementById('hud');
 
+  /*
+    Valores dinâmicos (identificador da TV, nomes de arquivo e erros) podem
+    chegar até o innerHTML das mensagens e do HUD. Todo texto que se origina
+    de dado externo passa por escapeHtml antes de virar HTML.
+  */
+  function escapeHtml(value) {
+    var text = String(value === null || value === undefined ? '' : value);
+    return text
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
   function contains(array, value) {
     var i;
     for (i = 0; i < array.length; i++) {
@@ -225,7 +240,7 @@
     }
     requestJson(BOOTSTRAP.devicesUrl, function (registry) {
       if (!applyDeviceRegistry(registry)) {
-        showMessage('TV não cadastrada', 'O identificador <code>' + deviceId + '</code> não existe no painel.');
+        showMessage('TV não cadastrada', 'O identificador <code>' + escapeHtml(deviceId) + '</code> não existe no painel.');
         return;
       }
       done();
@@ -361,7 +376,7 @@
     updateNotice = reloadAfterCurrent
       ? '  ↻ NOVO CONTEÚDO'
       : (maintenanceReloadDue ? '  ↻ MANUTENÇÃO PENDENTE' : '');
-    hud.innerHTML = (deviceId ? deviceId + '  ' : '') + position + updateNotice + '  ' +
+    hud.innerHTML = (deviceId ? escapeHtml(deviceId) + '  ' : '') + position + updateNotice + '  ' +
       pad2(now.getHours()) + ':' + pad2(now.getMinutes());
   }
 
@@ -608,7 +623,7 @@
       clearPlayback();
       showMessage(
         'Nenhuma mídia pôde ser reproduzida',
-        'Último arquivo: <code>' + item.name + '</code><br>' +
+        'Último arquivo: <code>' + escapeHtml(item.name) + '</code><br>' +
         detail + '<br>A playlist será verificada novamente em breve.'
       );
       setTimeout(refreshPlaylist, 60000);

@@ -150,6 +150,20 @@
   var activePlaylistUrls = [];
   var activePlaylistMode = 'global';
 
+  /*
+    Nomes de arquivos vindos da playlist podem conter HTML. Todo texto
+    dinâmico exibido nas mensagens passa por escapeHtml antes do innerHTML.
+  */
+  function escapeHtml(value) {
+    var text = String(value === null || value === undefined ? '' : value);
+    return text
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
   function contains(array, value) {
     var i;
     for (i = 0; i < array.length; i++) {
@@ -765,7 +779,7 @@
     if (!item) { return; }
     recoveryAttempts = 0;
     lastRecoveryAt = 0;
-    showMessage('Carregando mídia', item.name || 'Vídeo');
+    showMessage('Carregando mídia', escapeHtml(item.name) || 'Vídeo');
     if (item.type === 'image') {
       renderImage(item);
     } else {
