@@ -164,3 +164,25 @@ test('objeto ausente retorna 404', async () => {
   const response = await worker.fetch(request, fakeEnv());
   assert.equal(response.status, 404);
 });
+
+test('playlist corrompida no armazenamento retorna 502 claro', async () => {
+  const env = fakeEnv();
+  env.MEDIA_BUCKET.get = async (key) => {
+    if (key === 'playlist-staging.json') {
+      return fakeObject({
+        bodyText: '{ isto não é JSON válido',
+        contentType: 'application/json; charset=utf-8',
+        cacheControl: 'no-cache'
+      });
+    }
+    return fakeObject();
+  };
+  const request = new Request('https://gateway.example/playlist-staging.json', {
+    headers: { Origin: 'https://brenoq-a.github.io' }
+  });
+  const response = await worker.fetch(request, env);
+
+  assert.equal(response.status, 502);
+  assert.equal(response.headers.get('Cache-Control'), 'no-store');
+  assert.match(await response.text(), /Playlist inválida/);
+});

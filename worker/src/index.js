@@ -125,7 +125,19 @@ function simpleResponse(body, status, request, env, extraHeaders) {
 
 async function rewritePlaylistResponse(object, key, request, env) {
   const text = await new Response(object.body).text();
-  const playlist = JSON.parse(text);
+  let playlist;
+  try {
+    playlist = JSON.parse(text);
+  } catch (error) {
+    /*
+      Playlist corrompida no bucket não deve vazar como erro 500 genérico:
+      responde 502 com mensagem clara para facilitar o diagnóstico no painel.
+    */
+    return simpleResponse('Playlist inválida no armazenamento.', 502, request, env, {
+      'Content-Type': 'text/plain; charset=utf-8',
+      'Cache-Control': 'no-store'
+    });
+  }
   const items = playlist && Array.isArray(playlist.items) ? playlist.items : [];
   const baseUrl = new URL(request.url);
 
