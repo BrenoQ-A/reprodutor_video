@@ -1,0 +1,28 @@
+name: Test players and shared core
+
+on:
+  pull_request:
+    paths-ignore:
+      - 'worker/**'
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'worker/**'
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Run player and core tests
+        run: npm test

@@ -1,0 +1,14 @@
+{
+  "name": "reprodutor-video",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Player de sinalização digital para Smart TVs, com gateway de mídia em Cloudflare Workers + R2",
+  "scripts": {
+    "test": "node --test \"test/*.test.js\"",
+    "test:worker": "node --test \"worker/test/*.test.js\"",
+    "test:all": "node --test \"test/*.test.js\" \"worker/test/*.test.js\""
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
