@@ -215,3 +215,102 @@ test('revisionOf usa updatedAt quando existe e assinatura própria quando não',
     'a|https://m/A.mp4||b|https://m/B.mp4'
   );
 });
+
+test('resolveDevice retenta quando a TV ainda não está cadastrada', () => {
+  const attempts = [
+    { data: { devices: [{ id: 'outra-tv', playlistMode: 'global' }] } },
+    { data: { devices: [{ id: 'tv-01', playlistMode: 'individual' }] } }
+  ];
+  const { core, runTimersWithDelay } = createCore(attempts);
+  const calls = { notify: 0, ready: 0 };
+  let readyValue = null;
+
+  core.resolveDevice({
+    deviceId: 'tv-01',
+    bootstrap: BOOTSTRAP,
+    retryDelayMs: 60000,
+    notify() { calls.notify += 1; },
+    onFatal() {},
+    onReady(value) { calls.ready += 1; readyValue = value; }
+  });
+
+  assert.equal(calls.ready, 0);
+  assert.equal(calls.notify, 1);
+
+  runTimersWithDelay(60000);
+
+  assert.equal(calls.ready, 1);
+  assert.equal(readyValue.mode, 'individual');
+  assert.deepEqual(
+    Array.from(readyValue.urls),
+    ['https://media.example/devices/tv-01/playlist.json']
+  );
+});
+
+test('resolveDevice retenta após falha de rede na identificação', () => {
+  const attempts = [
+    { status: 503, body: 'unavailable' },
+    { data: { devices: [{ id: 'tv-01', playlistMode: 'mixed' }] } }
+  ];
+  const { core, runTimersWithDelay } = createCore(attempts);
+  const calls = { notify: 0, ready: 0 };
+
+  core.resolveDevice({
+    deviceId: 'tv-01',
+    bootstrap: BOOTSTRAP,
+    retryDelayMs: 30000,
+    notify() { calls.notify += 1; },
+    onFatal() {},
+    onReady() { calls.ready += 1; }
+  });
+
+  assert.equal(calls.notify, 1);
+  assert.equal(calls.ready, 0);
+
+  runTimersWithDelay(30000);
+
+  assert.equal(calls.ready, 1);
+});
+
+test('fetchActivePlaylist segue com as fontes disponíveis quando uma falha', () => {
+  const { core } = createCore([
+    { data: { devices: [{ id: 'tv-01', playlistMode: 'mixed' }] } },
+    { data: { updatedAt: 'v1', items: [{ id: 'a', name: 'A.mp4', type: 'video', url: 'https://m/A.mp4' }] } },
+    { status: 500, body: 'boom' }
+  ]);
+
+  let result = null;
+  core.fetchActivePlaylist({
+    deviceId: 'tv-01',
+    bootstrap: BOOTSTRAP,
+    urls: [BOOTSTRAP.playlistUrl],
+    mode: 'global',
+    onSuccess(value) { result = value; },
+    onError() { result = { error: true }; }
+  });
+
+  assert.equal(result.error, undefined);
+  assert.equal(result.updatedAt, 'mixed|v1||miss:1');
+  assert.deepEqual(Array.from(result.items, (item) => item.id), ['a']);
+});
+
+test('fetchActivePlaylist só reporta erro quando todas as fontes falham', () => {
+  const { core } = createCore([
+    { data: { devices: [{ id: 'tv-01', playlistMode: 'mixed' }] } },
+    { status: 500, body: 'boom' },
+    { status: 404, body: 'nope' }
+  ]);
+
+  let result = null;
+  core.fetchActivePlaylist({
+    deviceId: 'tv-01',
+    bootstrap: BOOTSTRAP,
+    urls: [BOOTSTRAP.playlistUrl],
+    mode: 'global',
+    onSuccess() { result = { success: true }; },
+    onError(message) { result = { error: message }; }
+  });
+
+  assert.equal(result.success, undefined);
+  assert.match(result.error, /500/);
+});
