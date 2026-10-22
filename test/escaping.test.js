@@ -13,16 +13,12 @@ function read(relativePath) {
 
 test('player principal escapa o identificador da TV antes do innerHTML', () => {
   const html = read('index.html');
+  const core = read('player-core.js');
 
-  assert.match(html, /function escapeHtml\(value\)/);
+  assert.match(core, /function escapeHtml\(value\)/);
   assert.match(
     html,
-    /escapeHtml\(deviceId\) \+ '<\/code> não existe no painel\./,
-    'mensagem de TV não cadastrada deve escapar o identificador'
-  );
-  assert.match(
-    html,
-    /hud\.innerHTML = \(deviceId \? escapeHtml\(deviceId\)/,
+    /PlayerCore\.escapeHtml\(deviceId\) \+ '  '/,
     'HUD deve escapar o identificador da TV'
   );
   assert.doesNotMatch(
@@ -37,7 +33,7 @@ test('player principal escapa o nome do arquivo em mensagens de falha', () => {
 
   assert.match(
     html,
-    /'Último arquivo: <code>' \+ escapeHtml\(item\.name\) \+ '<\/code><br>'/
+    /'Último arquivo: <code>' \+ PlayerCore\.escapeHtml\(item\.name\) \+ '<\/code><br>'/
   );
 });
 
@@ -45,17 +41,14 @@ test('players legado e leve escapam o nome da mídia ao carregar', () => {
   const legacy = read('legacy.html');
   const light = read('plsz.html');
 
-  assert.match(legacy, /function escapeHtml\(value\)/);
-  assert.match(legacy, /escapeHtml\(item\.name\) \|\| 'Vídeo'/);
-
-  assert.match(light, /function escapeHtml\(v\)/);
-  assert.match(light, /escapeHtml\(it\.name\)\|\|'Vídeo'/);
+  assert.match(legacy, /PlayerCore\.escapeHtml\(item\.name\) \|\| 'Vídeo'/);
+  assert.match(light, /PlayerCore\.escapeHtml\(it\.name\) ?\|\| ?'Vídeo'/);
 });
 
 test('escapeHtml cobre os caracteres perigosos de HTML', () => {
-  const legacy = read('legacy.html');
-  const match = legacy.match(/function escapeHtml\(value\) \{([\s\S]*?)\n  \}/);
-  assert.ok(match, 'função escapeHtml deve existir no player legado');
+  const core = read('player-core.js');
+  const match = core.match(/function escapeHtml\(value\) \{([\s\S]*?)\n  \}/);
+  assert.ok(match, 'função escapeHtml deve existir no player-core.js');
 
   const escapeHtml = new Function(
     'value',

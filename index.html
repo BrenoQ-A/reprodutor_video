@@ -100,6 +100,7 @@
   <p id="message-text">Carregando configuração...</p>
 </div>
 
+<script src="player-core.js"></script>
 <script>
 (function () {
   /*
@@ -150,7 +151,7 @@
   var currentVideoRetryCount = 0;
   var pendingResumeTime = 0;
   var maintenanceReloadDue = false;
-  var deviceId = queryParam('device');
+  var deviceId = PlayerCore.queryParam('device');
   var activePlaylistUrls = [];
   var activePlaylistMode = 'global';
 
@@ -167,182 +168,10 @@
   var hud = document.getElementById('hud');
 
   /*
-    Valores dinâmicos (identificador da TV, nomes de arquivo e erros) podem
-    chegar até o innerHTML das mensagens e do HUD. Todo texto que se origina
-    de dado externo passa por escapeHtml antes de virar HTML.
+    Utilidades puras, requisição JSON, normalização de playlist e camada de
+    devices/playlist vivem em player-core.js (PlayerCore). Este arquivo
+    mantém apenas a lógica de reprodução e mensagens de tela.
   */
-  function escapeHtml(value) {
-    var text = String(value === null || value === undefined ? '' : value);
-    return text
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#39;');
-  }
-
-  function contains(array, value) {
-    var i;
-    for (i = 0; i < array.length; i++) {
-      if (array[i] === value) { return true; }
-    }
-    return false;
-  }
-
-  function queryParam(name) {
-    var query = String(window.location.search || '').replace(/^\?/, '').split('&');
-    var i;
-    var pair;
-    for (i = 0; i < query.length; i++) {
-      pair = query[i].split('=');
-      if (decodeURIComponent(pair[0] || '') === name) {
-        return decodeURIComponent(String(pair.slice(1).join('=') || '').replace(/\+/g, ' '));
-      }
-    }
-    return '';
-  }
-
-  function siblingUrl(url, path) {
-    var clean = String(url || '').split('?')[0];
-    return clean.replace(/[^/]*$/, path);
-  }
-
-  function applyDeviceRegistry(registry) {
-    var i;
-    var found;
-    for (i = 0; registry && registry.devices && i < registry.devices.length; i++) {
-      if (String(registry.devices[i].id) === deviceId) { found = registry.devices[i]; break; }
-    }
-    if (!found) { return false; }
-    activePlaylistMode = found.playlistMode || 'global';
-    if (activePlaylistMode === 'individual') {
-      activePlaylistUrls = [siblingUrl(BOOTSTRAP.devicesUrl, 'devices/' + deviceId + '/playlist.json')];
-    } else if (activePlaylistMode === 'mixed') {
-      activePlaylistUrls = [
-        BOOTSTRAP.playlistUrl,
-        siblingUrl(BOOTSTRAP.devicesUrl, 'devices/' + deviceId + '/playlist.json')
-      ];
-    } else {
-      activePlaylistUrls = [BOOTSTRAP.playlistUrl];
-    }
-    return true;
-  }
-
-  function resolveDevice(done) {
-    if (!deviceId) {
-      activePlaylistUrls = [BOOTSTRAP.playlistUrl];
-      done();
-      return;
-    }
-    if (!BOOTSTRAP.devicesUrl) {
-      showMessage('Cadastro de TVs indisponível', 'Preencha <code>devicesUrl</code> em <code>player-config.json</code>.');
-      return;
-    }
-    requestJson(BOOTSTRAP.devicesUrl, function (registry) {
-      if (!applyDeviceRegistry(registry)) {
-        showMessage('TV não cadastrada', 'O identificador <code>' + escapeHtml(deviceId) + '</code> não existe no painel.');
-        return;
-      }
-      done();
-    }, function (error) {
-      showMessage('Falha ao identificar a TV', error);
-    });
-  }
-
-  function requestActivePlaylist(onSuccess, onError) {
-    function requestSources() {
-      var pending = activePlaylistUrls.length;
-      var results = [];
-      var failed = false;
-      var i;
-      if (!pending) { onError('Nenhuma playlist foi configurada.'); return; }
-      function finish() {
-      var combined = [];
-      var seen = {};
-      var revisions = [];
-      var x;
-      var y;
-      var source;
-      var item;
-      var signature;
-      for (x = 0; x < results.length; x++) {
-        source = results[x] && results[x].items ? results[x].items : results[x];
-        revisions.push(results[x] && results[x].updatedAt ? results[x].updatedAt : '');
-        for (y = 0; source && y < source.length; y++) {
-          item = source[y];
-          signature = String(item && (item.id || item.key || item.url || item.name));
-          if (!seen[signature]) { seen[signature] = true; combined.push(item); }
-        }
-      }
-        onSuccess({ items: combined, updatedAt: activePlaylistMode + '|' + revisions.join('|') });
-      }
-      for (i = 0; i < activePlaylistUrls.length; i++) {
-        (function (position) {
-          requestJson(activePlaylistUrls[position], function (data) {
-            results[position] = data || { items: [] };
-            pending -= 1;
-            if (!pending && !failed) { finish(); }
-          }, function (error) {
-            if (failed) { return; }
-            failed = true;
-            onError(error);
-          });
-        })(i);
-      }
-    }
-    if (deviceId && BOOTSTRAP.devicesUrl) {
-      requestJson(BOOTSTRAP.devicesUrl, function (registry) {
-        if (!applyDeviceRegistry(registry)) { onError('A TV não está mais cadastrada.'); return; }
-        requestSources();
-      }, function () {
-        requestSources();
-      });
-    } else {
-      requestSources();
-    }
-  }
-
-  function extOf(name) {
-    var parts = String(name || '').split('.');
-    if (parts.length < 2) { return ''; }
-    return parts[parts.length - 1].toLowerCase();
-  }
-
-  function merge(target, source) {
-    var key;
-    if (!source) { return target; }
-    for (key in source) {
-      if (source.hasOwnProperty(key)) { target[key] = source[key]; }
-    }
-    return target;
-  }
-
-  function cacheBust(url) {
-    return url + (url.indexOf('?') === -1 ? '?' : '&') + 't=' + new Date().getTime();
-  }
-
-  function requestJson(url, onSuccess, onError) {
-    var xhr = new XMLHttpRequest();
-    xhr.open('GET', cacheBust(url), true);
-    xhr.onreadystatechange = function () {
-      var data;
-      if (xhr.readyState !== 4) { return; }
-      if (xhr.status >= 200 && xhr.status < 300) {
-        try {
-          data = JSON.parse(xhr.responseText);
-          onSuccess(data);
-        } catch (error) {
-          onError('JSON inválido em ' + url);
-        }
-      } else {
-        onError('HTTP ' + xhr.status + ' ao acessar ' + url);
-      }
-    };
-    xhr.onerror = function () { onError('Falha de rede ao acessar ' + url); };
-    xhr.timeout = 30000;
-    xhr.ontimeout = function () { onError('Tempo esgotado ao acessar ' + url); };
-    xhr.send();
-  }
 
   function showMessage(title, text) {
     messageTitle.innerHTML = title;
@@ -376,7 +205,7 @@
     updateNotice = reloadAfterCurrent
       ? '  ↻ NOVO CONTEÚDO'
       : (maintenanceReloadDue ? '  ↻ MANUTENÇÃO PENDENTE' : '');
-    hud.innerHTML = (deviceId ? escapeHtml(deviceId) + '  ' : '') + position + updateNotice + '  ' +
+    hud.innerHTML = (deviceId ? PlayerCore.escapeHtml(deviceId) + '  ' : '') + position + updateNotice + '  ' +
       pad2(now.getHours()) + ':' + pad2(now.getMinutes());
   }
 
@@ -623,7 +452,7 @@
       clearPlayback();
       showMessage(
         'Nenhuma mídia pôde ser reproduzida',
-        'Último arquivo: <code>' + escapeHtml(item.name) + '</code><br>' +
+        'Último arquivo: <code>' + PlayerCore.escapeHtml(item.name) + '</code><br>' +
         detail + '<br>A playlist será verificada novamente em breve.'
       );
       setTimeout(refreshPlaylist, 60000);
@@ -804,29 +633,36 @@
       clearTimeout(refreshTimer);
       refreshTimer = null;
     }
-    requestActivePlaylist(function (data) {
-      var updated = normalizePlaylist(data);
-      var updatedRevision = revisionOf(data, updated);
-      if (updatedRevision !== playlistRevision) {
-        queuePlaylistUpdate(updated, updatedRevision);
-        activatePendingPlaylist();
-        return;
-      }
-      playlistRevision = updatedRevision;
-      if (playlist.length === 1 && playlist[0].type === 'video') {
-        restartSingleVideo();
-      } else {
-        advance();
-        schedulePlaylistRefresh();
-      }
-    }, function () {
-      if (playlist.length === 1 && playlist[0].type === 'video') {
-        restartSingleVideo();
-      } else {
-        advance();
-        schedulePlaylistRefresh(
-          Math.max(1, Number(CONFIG.pollIntervalMinutes) || 5) * 60 * 1000
-        );
+    PlayerCore.fetchActivePlaylist({
+      deviceId: deviceId,
+      bootstrap: BOOTSTRAP,
+      urls: activePlaylistUrls,
+      mode: activePlaylistMode,
+      onSuccess: function (data) {
+        var updated = PlayerCore.normalizePlaylist(data);
+        var updatedRevision = PlayerCore.revisionOf(data, updated);
+        if (updatedRevision !== playlistRevision) {
+          queuePlaylistUpdate(updated, updatedRevision);
+          activatePendingPlaylist();
+          return;
+        }
+        playlistRevision = updatedRevision;
+        if (playlist.length === 1 && playlist[0].type === 'video') {
+          restartSingleVideo();
+        } else {
+          advance();
+          schedulePlaylistRefresh();
+        }
+      },
+      onError: function () {
+        if (playlist.length === 1 && playlist[0].type === 'video') {
+          restartSingleVideo();
+        } else {
+          advance();
+          schedulePlaylistRefresh(
+            Math.max(1, Number(CONFIG.pollIntervalMinutes) || 5) * 60 * 1000
+          );
+        }
       }
     });
   }
@@ -952,73 +788,6 @@
     renderCurrent();
   }
 
-  function normalizePlaylist(data) {
-    var source = data && data.items ? data.items : data;
-    var result = [];
-    var seen = {};
-    var i;
-    var item;
-    var extension;
-    var type;
-    var signature;
-
-    if (!source || typeof source.length !== 'number') { return result; }
-    for (i = 0; i < source.length; i++) {
-      item = source[i];
-      if (!item || !item.url || !item.name) { continue; }
-      extension = extOf(item.name);
-      if (item.type === 'video' || contains(VIDEO_EXT, extension)) {
-        type = 'video';
-      } else if (item.type === 'image' || contains(IMAGE_EXT, extension)) {
-        type = 'image';
-      } else {
-        continue;
-      }
-
-      signature = '';
-      if (item.contentHash) {
-        signature = 'hash|' + String(item.contentHash);
-      } else if (Number(item.sizeBytes) > 0 && Number(item.durationSeconds) > 0) {
-        signature = [
-          'legacy',
-          type,
-          String(item.originalName || item.name).toLowerCase(),
-          String(Number(item.sizeBytes)),
-          String(Math.round(Number(item.durationSeconds) * 1000))
-        ].join('|');
-      }
-      if (signature && Object.prototype.hasOwnProperty.call(seen, signature)) {
-        continue;
-      }
-      if (signature) { seen[signature] = true; }
-
-      if (type === 'video') {
-        result.push({
-          id: item.id || item.key || item.name,
-          name: item.name,
-          url: item.url,
-          type: 'video',
-          durationSeconds: item.durationSeconds
-        });
-      } else {
-        result.push({
-          id: item.id || item.key || item.name,
-          name: item.name,
-          url: item.url,
-          type: 'image'
-        });
-      }
-    }
-    return result;
-  }
-
-  function revisionOf(data, normalized) {
-    if (data && data.updatedAt) { return String(data.updatedAt); }
-    return normalized.map(function (item) {
-      return String(item.id || item.name) + '|' + String(item.url);
-    }).join('||');
-  }
-
   function refreshPlaylist() {
     if (!BOOTSTRAP.playlistUrl) {
       showMessage(
@@ -1028,61 +797,68 @@
       return;
     }
 
-    requestActivePlaylist(function (data) {
-      var updated = normalizePlaylist(data);
-      var updatedRevision = revisionOf(data, updated);
-      var i;
+    PlayerCore.fetchActivePlaylist({
+      deviceId: deviceId,
+      bootstrap: BOOTSTRAP,
+      urls: activePlaylistUrls,
+      mode: activePlaylistMode,
+      onSuccess: function (data) {
+        var updated = PlayerCore.normalizePlaylist(data);
+        var updatedRevision = PlayerCore.revisionOf(data, updated);
+        var i;
 
-      if (playlistRevision && updatedRevision !== playlistRevision) {
-        queuePlaylistUpdate(updated, updatedRevision);
-        if (!currentId || stageInner.innerHTML === '') {
-          activatePendingPlaylist();
+        if (playlistRevision && updatedRevision !== playlistRevision) {
+          queuePlaylistUpdate(updated, updatedRevision);
+          if (!currentId || stageInner.innerHTML === '') {
+            activatePendingPlaylist();
+            return;
+          }
+          schedulePlaylistRefresh();
           return;
         }
-        schedulePlaylistRefresh();
-        return;
-      }
 
-      if (reloadAfterCurrent) {
-        pendingPlaylist = updated;
-        schedulePlaylistRefresh();
-        return;
-      }
+        if (reloadAfterCurrent) {
+          pendingPlaylist = updated;
+          schedulePlaylistRefresh();
+          return;
+        }
 
-      playlistRevision = updatedRevision;
-      playlist = updated;
+        playlistRevision = updatedRevision;
+        playlist = updated;
 
-      if (!playlist.length) {
-        clearPlayback();
-        index = -1;
-        showMessage('Nenhuma mídia publicada', 'Envie um vídeo pelo painel administrativo.');
-        schedulePlaylistRefresh();
-        return;
-      }
+        if (!playlist.length) {
+          clearPlayback();
+          index = -1;
+          showMessage('Nenhuma mídia publicada', 'Envie um vídeo pelo painel administrativo.');
+          schedulePlaylistRefresh();
+          return;
+        }
 
-      if (currentId) {
-        for (i = 0; i < playlist.length; i++) {
-          if (playlist[i].id === currentId) {
-            index = i;
-            break;
+        if (currentId) {
+          for (i = 0; i < playlist.length; i++) {
+            if (playlist[i].id === currentId) {
+              index = i;
+              break;
+            }
           }
         }
-      }
 
-      if (stageInner.innerHTML === '' || index === -1) {
-        hideMessage();
-        index = -1;
-        failuresInCycle = 0;
-        advance();
+        if (stageInner.innerHTML === '' || index === -1) {
+          hideMessage();
+          index = -1;
+          failuresInCycle = 0;
+          advance();
+        }
+        schedulePlaylistRefresh();
+      },
+      onError: function (error) {
+        if (!playlist.length) {
+          showMessage('Falha ao carregar playlist', error);
+        }
+        schedulePlaylistRefresh(
+          Math.max(1, Number(CONFIG.pollIntervalMinutes) || 5) * 60 * 1000
+        );
       }
-      schedulePlaylistRefresh();
-    }, function (error) {
-      if (!playlist.length) {
-        showMessage('Falha ao carregar playlist', error);
-      }
-      schedulePlaylistRefresh(
-        Math.max(1, Number(CONFIG.pollIntervalMinutes) || 5) * 60 * 1000
-      );
     });
   }
 
@@ -1103,19 +879,6 @@
     );
   }
 
-  function loadRuntimeConfig(done) {
-    if (!BOOTSTRAP.configUrl) {
-      done();
-      return;
-    }
-    requestJson(BOOTSTRAP.configUrl, function (remote) {
-      merge(CONFIG, remote);
-      done();
-    }, function () {
-      done();
-    });
-  }
-
   function start() {
     updateHud();
     setInterval(updateHud, 15000);
@@ -1124,27 +887,39 @@
     } else {
       window.onresize = refitCurrentMedia;
     }
-    resolveDevice(function () {
-      loadRuntimeConfig(function () {
-        refreshPlaylist();
-        if (CONFIG.autoReloadHours > 0) {
-          setTimeout(function () {
-            maintenanceReloadDue = true;
-            updateHud();
-          }, CONFIG.autoReloadHours * 60 * 60 * 1000);
-        }
-      });
+    PlayerCore.resolveDevice({
+      deviceId: deviceId,
+      bootstrap: BOOTSTRAP,
+      notify: showMessage,
+      onFatal: showMessage,
+      onReady: function (device) {
+        activePlaylistUrls = device.urls;
+        activePlaylistMode = device.mode;
+        PlayerCore.loadRuntimeConfig({
+          configUrl: BOOTSTRAP.configUrl,
+          config: CONFIG,
+          onDone: function () {
+            refreshPlaylist();
+            if (CONFIG.autoReloadHours > 0) {
+              setTimeout(function () {
+                maintenanceReloadDue = true;
+                updateHud();
+              }, CONFIG.autoReloadHours * 60 * 60 * 1000);
+            }
+          }
+        });
+      }
     });
   }
 
-  requestJson('player-config.json', function (remoteBootstrap) {
-    merge(BOOTSTRAP, remoteBootstrap);
-    start();
-  }, function () {
-    showMessage(
-      'Configuração não encontrada',
-      'Não foi possível carregar <code>player-config.json</code>.'
-    );
+  PlayerCore.loadBootstrap({
+    onReady: function (remoteBootstrap) {
+      PlayerCore.merge(BOOTSTRAP, remoteBootstrap);
+      start();
+    },
+    onFatal: function (title, text) {
+      showMessage(title, text);
+    }
   });
 })();
 </script>

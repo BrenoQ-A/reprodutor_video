@@ -78,6 +78,7 @@
   </div>
 </div>
 
+<script src="player-core.js"></script>
 <script>
 (function () {
   /*
@@ -146,188 +147,21 @@
   var lastRecoveryAt = 0;
   var reloadScheduled = false;
   var reloadTimer = null;
-  var deviceId = queryValue('device');
+  var deviceId = PlayerCore.queryParam('device');
   var activePlaylistUrls = [];
   var activePlaylistMode = 'global';
 
   /*
-    Nomes de arquivos vindos da playlist podem conter HTML. Todo texto
-    dinâmico exibido nas mensagens passa por escapeHtml antes do innerHTML.
+    Utilidades puras, requisição JSON, normalização de playlist e camada de
+    devices/playlist vivem em player-core.js (PlayerCore). Este arquivo
+    mantém a lógica de reprodução e os mecanismos de segurança do WebKit
+    antigo (safe reload, watchdogs e guardião de fim de vídeo).
   */
-  function escapeHtml(value) {
-    var text = String(value === null || value === undefined ? '' : value);
-    return text
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#39;');
-  }
-
-  function contains(array, value) {
-    var i;
-    for (i = 0; i < array.length; i++) {
-      if (array[i] === value) { return true; }
-    }
-    return false;
-  }
-
-  function extOf(name) {
-    var parts = String(name || '').split('.');
-    return parts.length > 1 ? parts[parts.length - 1].toLowerCase() : '';
-  }
-
-  function merge(target, source) {
-    var key;
-    if (!source) { return target; }
-    for (key in source) {
-      if (source.hasOwnProperty(key)) { target[key] = source[key]; }
-    }
-    return target;
-  }
-
-  function queryValue(name) {
-    var search = String(window.location.search || '').replace(/^\?/, '');
-    var parts = search ? search.split('&') : [];
-    var i;
-    var pair;
-    for (i = 0; i < parts.length; i++) {
-      pair = parts[i].split('=');
-      if (decodeURIComponent(pair[0] || '') === name) {
-        return decodeURIComponent(pair.slice(1).join('=') || '');
-      }
-    }
-    return '';
-  }
 
   function applyQueryOverrides() {
-    var fit = String(queryValue('fit') || '').toLowerCase();
+    var fit = String(PlayerCore.queryParam('fit') || '').toLowerCase();
     if (fit === 'contain' || fit === 'cover' || fit === 'stretch') {
       CONFIG.legacyFitMode = fit;
-    }
-  }
-
-  function cacheBust(url) {
-    return url + (url.indexOf('?') === -1 ? '?' : '&') + 't=' + new Date().getTime();
-  }
-
-  function requestJson(url, onSuccess, onError) {
-    var xhr = new XMLHttpRequest();
-    xhr.open('GET', cacheBust(url), true);
-    xhr.timeout = 30000;
-    xhr.onreadystatechange = function () {
-      var data;
-      if (xhr.readyState !== 4) { return; }
-      if (xhr.status >= 200 && xhr.status < 300) {
-        try {
-          data = JSON.parse(xhr.responseText);
-          onSuccess(data);
-        } catch (error) {
-          onError('JSON inválido.');
-        }
-      } else {
-        onError('HTTP ' + xhr.status + '.');
-      }
-    };
-    xhr.onerror = function () { onError('Falha de rede.'); };
-    xhr.ontimeout = function () { onError('Tempo de rede esgotado.'); };
-    xhr.send();
-  }
-
-  function siblingUrl(url, path) {
-    return String(url || '').split('?')[0].replace(/[^/]*$/, path);
-  }
-
-  function applyDeviceRegistry(registry) {
-    var found;
-    var i;
-    for (i = 0; registry && registry.devices && i < registry.devices.length; i++) {
-      if (String(registry.devices[i].id) === deviceId) { found = registry.devices[i]; break; }
-    }
-    if (!found) { return false; }
-    activePlaylistMode = found.playlistMode || 'global';
-    if (activePlaylistMode === 'individual') {
-      activePlaylistUrls = [siblingUrl(BOOTSTRAP.devicesUrl, 'devices/' + deviceId + '/playlist.json')];
-    } else if (activePlaylistMode === 'mixed') {
-      activePlaylistUrls = [
-        BOOTSTRAP.playlistUrl,
-        siblingUrl(BOOTSTRAP.devicesUrl, 'devices/' + deviceId + '/playlist.json')
-      ];
-    } else {
-      activePlaylistUrls = [BOOTSTRAP.playlistUrl];
-    }
-    return true;
-  }
-
-  function resolveDevice(done) {
-    if (!deviceId) {
-      activePlaylistUrls = [BOOTSTRAP.playlistUrl];
-      done();
-      return;
-    }
-    if (!BOOTSTRAP.devicesUrl) {
-      showMessage('Cadastro de TVs indisponível', 'O endereço do cadastro de TVs não foi configurado.');
-      return;
-    }
-    requestJson(BOOTSTRAP.devicesUrl, function (registry) {
-      if (!applyDeviceRegistry(registry)) {
-        showMessage('TV não cadastrada', 'O identificador desta TV não existe no painel.');
-        return;
-      }
-      done();
-    }, function () {
-      showMessage('Aguardando rede', 'Não foi possível identificar esta TV.');
-    });
-  }
-
-  function requestActivePlaylist(onSuccess, onError) {
-    function requestSources() {
-      var pending = activePlaylistUrls.length;
-      var results = [];
-      var failed = false;
-      var i;
-      if (!pending) { onError(); return; }
-      function finish() {
-        var items = [];
-        var seen = {};
-        var revisions = [];
-        var source;
-        var item;
-        var signature;
-        var x;
-        var y;
-        for (x = 0; x < results.length; x++) {
-          source = results[x] && results[x].items ? results[x].items : results[x];
-          revisions.push(results[x] && results[x].updatedAt ? results[x].updatedAt : '');
-          for (y = 0; source && y < source.length; y++) {
-            item = source[y];
-            signature = String(item && (item.id || item.key || item.url || item.name));
-            if (!seen[signature]) { seen[signature] = true; items.push(item); }
-          }
-        }
-        onSuccess({ items: items, updatedAt: activePlaylistMode + '|' + revisions.join('|') });
-      }
-      for (i = 0; i < activePlaylistUrls.length; i++) {
-        (function (position) {
-          requestJson(activePlaylistUrls[position], function (data) {
-            results[position] = data || { items: [] };
-            pending -= 1;
-            if (!pending && !failed) { finish(); }
-          }, function () {
-            if (failed) { return; }
-            failed = true;
-            onError();
-          });
-        })(i);
-      }
-    }
-    if (deviceId && BOOTSTRAP.devicesUrl) {
-      requestJson(BOOTSTRAP.devicesUrl, function (registry) {
-        if (!applyDeviceRegistry(registry)) { onError(); return; }
-        requestSources();
-      }, requestSources);
-    } else {
-      requestSources();
     }
   }
 
@@ -495,55 +329,6 @@
     } else if (currentType === 'image' && image.style.display !== 'none') {
       fitElement(image, Number(image.naturalWidth), Number(image.naturalHeight));
     }
-  }
-
-  function normalizePlaylist(data) {
-    var source = data && data.items ? data.items : data;
-    var result = [];
-    var seen = {};
-    var i;
-    var item;
-    var type;
-    var extension;
-    var signature;
-
-    if (!source || typeof source.length !== 'number') { return result; }
-
-    for (i = 0; i < source.length; i++) {
-      item = source[i];
-      if (!item || !item.url || !item.name) { continue; }
-      extension = extOf(item.name);
-      if (item.type === 'video' || contains(VIDEO_EXT, extension)) {
-        type = 'video';
-      } else if (item.type === 'image' || contains(IMAGE_EXT, extension)) {
-        type = 'image';
-      } else {
-        continue;
-      }
-
-      signature = String(item.contentHash || item.id || item.key || item.url);
-      if (seen[signature]) { continue; }
-      seen[signature] = true;
-
-      result.push({
-        id: item.id || item.key || item.name,
-        name: item.name,
-        url: item.url,
-        type: type,
-        durationSeconds: item.durationSeconds
-      });
-    }
-    return result;
-  }
-
-  function revisionOf(data, normalized) {
-    var parts = [];
-    var i;
-    if (data && data.updatedAt) { return String(data.updatedAt); }
-    for (i = 0; i < normalized.length; i++) {
-      parts.push(String(normalized[i].id) + '|' + String(normalized[i].url));
-    }
-    return parts.join('||');
   }
 
   function stopImageAudio() {
@@ -779,7 +564,7 @@
     if (!item) { return; }
     recoveryAttempts = 0;
     lastRecoveryAt = 0;
-    showMessage('Carregando mídia', escapeHtml(item.name) || 'Vídeo');
+    showMessage('Carregando mídia', PlayerCore.escapeHtml(item.name) || 'Vídeo');
     if (item.type === 'image') {
       renderImage(item);
     } else {
@@ -828,9 +613,14 @@
 
   function refreshPlaylist() {
     if (!BOOTSTRAP.playlistUrl) { return; }
-    requestActivePlaylist(function (data) {
-      var updated = normalizePlaylist(data);
-      var revision = revisionOf(data, updated);
+    PlayerCore.fetchActivePlaylist({
+      deviceId: deviceId,
+      bootstrap: BOOTSTRAP,
+      urls: activePlaylistUrls,
+      mode: activePlaylistMode,
+      onSuccess: function (data) {
+      var updated = PlayerCore.normalizePlaylist(data);
+      var revision = PlayerCore.revisionOf(data, updated);
 
       if (!playlistRevision) {
         playlistRevision = revision;
@@ -855,9 +645,11 @@
           advance();
         }
       }
-    }, function () {
-      if (!playlist.length) {
-        showMessage('Aguardando rede', 'Não foi possível consultar a playlist. Tentaremos novamente.');
+      },
+      onError: function () {
+        if (!playlist.length) {
+          showMessage('Aguardando rede', 'Não foi possível consultar a playlist. Tentaremos novamente.');
+        }
       }
     });
   }
@@ -899,21 +691,6 @@
       lastProgressAt = now;
       recoverFromWatchdog('O vídeo ficou sem avançar por mais de 30 segundos.');
     }
-  }
-
-  function loadRuntimeConfig(done) {
-    if (!BOOTSTRAP.configUrl) {
-      done();
-      return;
-    }
-    requestJson(BOOTSTRAP.configUrl, function (remote) {
-      merge(CONFIG, remote);
-      applyQueryOverrides();
-      done();
-    }, function () {
-      applyQueryOverrides();
-      done();
-    });
   }
 
   video.onloadedmetadata = function () {
@@ -967,19 +744,40 @@
 
   setInterval(watchdogTick, STALL_CHECK_MS);
 
-  requestJson('player-config.json', function (remoteBootstrap) {
-    merge(BOOTSTRAP, remoteBootstrap);
-    if (Number(BOOTSTRAP.playlistCheckSeconds) < 60) {
-      BOOTSTRAP.playlistCheckSeconds = 60;
-    }
-    resolveDevice(function () {
-      loadRuntimeConfig(function () {
-        refreshPlaylist();
-        startPlaylistPolling();
+  PlayerCore.loadBootstrap({
+    onReady: function (remoteBootstrap) {
+      PlayerCore.merge(BOOTSTRAP, remoteBootstrap);
+      /*
+        TVs antigas: polling abaixo de 60s sobrecarrega o XHR do WebKit
+        legado e provoca travamentos de rede. O limite mínimo é proposital.
+      */
+      if (Number(BOOTSTRAP.playlistCheckSeconds) < 60) {
+        BOOTSTRAP.playlistCheckSeconds = 60;
+      }
+      applyQueryOverrides();
+      PlayerCore.resolveDevice({
+        deviceId: deviceId,
+        bootstrap: BOOTSTRAP,
+        notify: showMessage,
+        onFatal: showMessage,
+        onReady: function (device) {
+          activePlaylistUrls = device.urls;
+          activePlaylistMode = device.mode;
+          PlayerCore.loadRuntimeConfig({
+            configUrl: BOOTSTRAP.configUrl,
+            config: CONFIG,
+            onDone: function () {
+              applyQueryOverrides();
+              refreshPlaylist();
+              startPlaylistPolling();
+            }
+          });
+        }
       });
-    });
-  }, function () {
-    showMessage('Configuração não encontrada', 'Não foi possível carregar player-config.json.');
+    },
+    onFatal: function (title, text) {
+      showMessage(title, text);
+    }
   });
 })();
 </script>

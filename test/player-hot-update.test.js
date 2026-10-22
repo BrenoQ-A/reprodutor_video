@@ -7,7 +7,18 @@ const test = require('node:test');
 const vm = require('node:vm');
 
 const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
-const script = html.match(/<script>([\s\S]*?)<\/script>/i)[1];
+const coreScript = fs.readFileSync(path.join(__dirname, '..', 'player-core.js'), 'utf8');
+
+// Scripts inline do player (sem atributo src) + núcleo compartilhado.
+const inlineScripts = [];
+const scriptTags = /<script([^>]*)>([\s\S]*?)<\/script>/g;
+let tagMatch;
+while ((tagMatch = scriptTags.exec(html)) !== null) {
+  if (!/\bsrc=/.test(tagMatch[1]) && tagMatch[2].trim() !== '') {
+    inlineScripts.push(tagMatch[2]);
+  }
+}
+const script = coreScript + '\n;\n' + inlineScripts.join('\n;\n');
 
 function fakeElement(tagName) {
   let rawHtml = '';
