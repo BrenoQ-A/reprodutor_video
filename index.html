@@ -17,6 +17,13 @@
     font-family: Arial, Helvetica, sans-serif;
     color: #EDEDEA;
   }
+  /* Modo device (Android WebView/APK): sem piso de 1280x720, o layout
+     acompanha 1:1 a resolução que o aparelho reporta. */
+  .device-fit,
+  .device-fit body {
+    min-width: 0;
+    min-height: 0;
+  }
   #stage-outer {
     position: absolute;
     top: 0;
@@ -102,6 +109,62 @@
 
 <script src="player-core.js"></script>
 <script>
+/*
+  Ajuste de layout por ambiente (correção APK/Android TV).
+
+  Dentro do APK o WebView obedece à meta viewport (navegadores de desktop
+  ignoram), e com width=1280 a página era desenhada em 1280x720 CSS e
+  reescalonada pelo aparelho — fonte de imagem borrada/enquadramento errado.
+
+  - Detecta Android WebView pelo token "; wv)" do User-Agent e troca a meta
+    para width=device-width (render 1:1, sem reescalonamento).
+  - ?viewport=device|1280 força o modo; ?fit=cover|contain|stretch escolhe o
+    enquadramento (no WebView o padrão passa a ser cover, igual aos players
+    legados; em Tizen/desktop nada muda).
+
+  Roda depois do player-core.js e antes do script principal, que lê
+  window.__PLAYER_LAYOUT__ no boot.
+*/
+(function () {
+  var query = String(window.location.search || '').replace(/^\?/, '').split('&');
+  var param = function (name) {
+    for (var i = 0; i < query.length; i++) {
+      var pair = query[i].split('=');
+      if (decodeURIComponent(pair[0] || '') === name) {
+        return decodeURIComponent(String(pair.slice(1).join('=') || '').replace(/\+/g, ' '));
+      }
+    }
+    return '';
+  };
+  var isAndroidWebView = false;
+  if (typeof navigator !== 'undefined' && navigator.userAgent) {
+    isAndroidWebView = /;\s*wv\)/.test(navigator.userAgent);
+  }
+  var requested = param('viewport').toLowerCase();
+  var mode = requested === 'device' || requested === '1280'
+    ? requested
+    : (isAndroidWebView ? 'device' : '1280');
+  var fit = param('fit').toLowerCase();
+  if (fit !== 'cover' && fit !== 'contain' && fit !== 'stretch') {
+    fit = mode === 'device' ? 'cover' : 'contain';
+  }
+  if (mode === 'device') {
+    if (document.querySelector) {
+      var meta = document.querySelector('meta[name="viewport"]');
+      if (meta) {
+        meta.setAttribute('content', 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no');
+      }
+    }
+    if (document.documentElement.classList) {
+      document.documentElement.classList.add('device-fit');
+    } else {
+      document.documentElement.className += ' device-fit';
+    }
+  }
+  window.__PLAYER_LAYOUT__ = { deviceMode: mode === 'device', fitMode: fit };
+}());
+</script>
+<script>
 (function () {
   /*
     Compatível com Samsung Smart Hub N14M / navegador WebKit legado.
@@ -153,6 +216,14 @@
   var deviceId = PlayerCore.queryParam('device');
   var activePlaylistUrls = [];
   var activePlaylistMode = 'global';
+
+  /*
+    Layout definido no <head>: window.__PLAYER_LAYOUT__ informa se estamos em
+    modo device (Android WebView/APK, sem piso de 1280x720 e meta
+    width=device-width) e o modo de enquadramento (contain/cover/stretch).
+    Em Tizen/desktop o comportamento original é preservado.
+  */
+  var LAYOUT = window.__PLAYER_LAYOUT__ || { deviceMode: false, fitMode: 'contain' };
 
   var VIDEO_STALL_TIMEOUT_MS = 20000;
   var VIDEO_RETRY_DELAY_MS = 2000;
@@ -226,14 +297,14 @@
         Number(window.innerWidth) || 0,
         documentWidth,
         bodyWidth,
-        1280
+        LAYOUT.deviceMode ? 0 : 1280
       ),
       height: Math.max(
         stageHeight,
         Number(window.innerHeight) || 0,
         documentHeight,
         bodyHeight,
-        720
+        LAYOUT.deviceMode ? 0 : 720
       )
     };
   }
@@ -241,14 +312,44 @@
   function fitToScreen(element, naturalWidth, naturalHeight) {
     var viewport;
     var scale;
+    var mode = String(LAYOUT.fitMode || 'contain').toLowerCase();
+    var displayWidth;
+    var displayHeight;
     if (!naturalWidth || !naturalHeight) {
       naturalWidth = 16;
       naturalHeight = 9;
     }
     viewport = viewportSize();
-    scale = Math.min(viewport.width / naturalWidth, viewport.height / naturalHeight);
-    element.style.width = Math.floor(naturalWidth * scale) + 'px';
-    element.style.height = Math.floor(naturalHeight * scale) + 'px';
+    if (mode === 'stretch') {
+      displayWidth = viewport.width;
+      displayHeight = viewport.height;
+    } else if (mode === 'cover') {
+      /* Preenche o palco inteiro; o excesso é cortado simetricamente. */
+      scale = Math.max(viewport.width / naturalWidth, viewport.height / naturalHeight);
+      displayWidth = Math.floor(naturalWidth * scale);
+      displayHeight = Math.floor(naturalHeight * scale);
+    } else {
+      mode = 'contain';
+      scale = Math.min(viewport.width / naturalWidth, viewport.height / naturalHeight);
+      displayWidth = Math.floor(naturalWidth * scale);
+      displayHeight = Math.floor(naturalHeight * scale);
+    }
+    element.style.width = displayWidth + 'px';
+    element.style.height = displayHeight + 'px';
+    if (mode === 'contain') {
+      /* Comportamento original: centralizado pelo #stage-inner (table-cell). */
+      element.style.position = '';
+      element.style.margin = '';
+      element.style.left = '';
+      element.style.top = '';
+    } else {
+      /* cover/stretch excedem o palco: posiciona absoluto e centralizado,
+         para o corte ficar simétrico nas quatro bordas. */
+      element.style.position = 'absolute';
+      element.style.margin = '0';
+      element.style.left = Math.floor((viewport.width - displayWidth) / 2) + 'px';
+      element.style.top = Math.floor((viewport.height - displayHeight) / 2) + 'px';
+    }
   }
 
   function fitVideo(element) {
